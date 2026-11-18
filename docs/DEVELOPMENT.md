@@ -22,8 +22,7 @@ MeldMail is an email client and aggregation layer. It is **not** an email hostin
 3. Show new mail quickly through IMAP IDLE where supported, with polling and reconciliation as fallbacks.
 4. Support reading, replying, forwarding, composing, sending, archiving, moving, starring, and read/unread operations.
 5. Support per-account network routing: Direct, HTTP CONNECT, HTTPS proxy, and SOCKS5.
-6. Expose a controlled MCP interface so AI clients and agents can search and operate on mail with user authorization.
-7. Expose a standard MCP Server so external MCP-compatible clients and AI agents can access authorized email capabilities.
+6. Expose a standard, permission-controlled MCP Server so external MCP-compatible clients and AI agents can access authorized email capabilities.
 8. Keep resource usage low enough to share a 2 vCPU / 2 GB server with several unrelated services.
 9. Use a single responsive web application for desktop, tablet, and mobile browsers.
 
