@@ -23,7 +23,7 @@ MeldMail is an email client and aggregation layer. It is **not** an email hostin
 4. Support reading, replying, forwarding, composing, sending, archiving, moving, starring, and read/unread operations.
 5. Support per-account network routing: Direct, HTTP CONNECT, HTTPS proxy, and SOCKS5.
 6. Expose a controlled MCP interface so AI clients and agents can search and operate on mail with user authorization.
-7. Work with Coze (扣子) through a remotely accessible MCP transport.
+7. Expose a standard MCP Server so external MCP-compatible clients and AI agents can access authorized email capabilities.
 8. Keep resource usage low enough to share a 2 vCPU / 2 GB server with several unrelated services.
 9. Use a single responsive web application for desktop, tablet, and mobile browsers.
 
@@ -44,6 +44,7 @@ MeldMail is an email client and aggregation layer. It is **not** an email hostin
 - Initial account capacity: 5–10 connected mailboxes.
 - Primary deployment: Linux server, Docker Compose, behind an existing HTTPS reverse proxy.
 - Initial resource envelope: 2 vCPU / 2 GB RAM shared with four or five other services.
+- MCP consumers are external applications or AI agents. MeldMail provides the server interface and does not embed or depend on a particular MCP client.
 
 ---
 
@@ -155,7 +156,7 @@ The account settings page should provide a connection test that reports, without
 
 ---
 
-## 4. MCP and Coze integration
+## 4. MCP Server — open integration
 
 MCP is a first-class integration surface, but it must call the same application services as the web UI. Do not create a second mail implementation inside the MCP package.
 
@@ -163,10 +164,10 @@ MCP is a first-class integration surface, but it must call the same application 
 
 - Primary remote transport: MCP Streamable HTTP at a dedicated endpoint such as /mcp.
 - Optional local transport: stdio for local MCP clients, implemented as an adapter over the same tool registry.
-- Legacy SSE transport may be added only when a target client requires it; do not make it the primary new deployment path.
+- Legacy SSE transport may be added only when a concrete interoperability requirement justifies it; do not make it the primary new deployment path.
 - Serve remote MCP only over HTTPS, normally through the existing reverse proxy.
-- Coze's current custom MCP connection documentation lists Streamable HTTP and SSE support and does not support stdio. Therefore Coze integration must use the remote Streamable HTTP endpoint, not stdio.
-- Provide a copyable MCP connection URL and setup guide in the project documentation. Do not claim that Coze has been tested until an end-to-end test has been completed.
+- Publish the endpoint, authentication method, supported transport, and available tools as platform-neutral integration documentation.
+- Do not implement platform-specific SDKs, APIs, adapters, authentication bridges, or custom workflows for individual AI platforms. Client compatibility depends on whether the external client supports the MCP transport and authentication method exposed by MeldMail.
 
 ### 4.2 Initial MCP tools
 
@@ -208,19 +209,19 @@ The tool registry may expose fewer tools in the first milestone. Implement only 
 - Apply per-token rate limits and account-level authorization checks.
 - Do not allow MCP tools to execute arbitrary shell commands, arbitrary URLs, or arbitrary SQL.
 
-### 4.4 Coze connection model
+### 4.4 Generic MCP client connection model
 
-The self-hosted MeldMail instance exposes its MCP endpoint through HTTPS. The user adds that endpoint as a custom MCP service in Coze and grants the relevant Agent access to it.
+An external MCP client connects to the self-hosted MeldMail MCP endpoint using one of the transports supported by both sides. The client supplies its own MCP configuration and presents a valid MeldMail access token or other supported authentication credential.
 
-The integration guide must explain:
-- The public HTTPS MCP URL.
-- How to create and revoke an MCP access token.
-- How to add a custom MCP service in Coze.
+Platform-neutral integration documentation must explain:
+- The public HTTPS MCP endpoint.
+- Supported MCP transports and authentication requirements.
+- How to create, scope, rotate, and revoke an MCP access token.
 - Which tools are read-only and which can modify or send mail.
-- How to verify the connection with a harmless search/list operation.
-- Why sending or deleting requires explicit confirmation.
+- How to verify a connection with a harmless search/list operation.
+- Which consequential actions require explicit confirmation.
 
-Coze support is an MCP-client compatibility target, not a dependency on Coze APIs. MeldMail must remain usable without Coze.
+MeldMail remains independent of any specific MCP client. Client-specific setup screenshots or notes may be contributed as optional documentation, but they must not introduce platform-specific runtime code or become product dependencies.
 
 ---
 
@@ -625,7 +626,7 @@ Events should contain identifiers and minimal metadata, not full message bodies 
 - Proxy tests for Direct, HTTP CONNECT, HTTPS proxy, SOCKS5, proxy authentication, DNS behavior, and connection timeout.
 - MIME tests for encoded headers, multipart messages, malformed content, nested parts, oversized attachments, and HTML sanitization.
 - SQLite migration, transaction, backup, and recovery tests.
-- MCP tests for initialization, tool discovery, authorization scopes, invalid arguments, confirmation, audit records, and Coze Streamable HTTP compatibility.
+- MCP tests for initialization, tool discovery, authorization scopes, invalid arguments, confirmation, audit records, and MCP Streamable HTTP interoperability.
 - Frontend tests for desktop/mobile layout, unread state, error states, and SSE reconnect.
 - End-to-end tests using test mailboxes. Never use production mailbox credentials in CI.
 
@@ -683,12 +684,12 @@ Do not claim provider compatibility based only on a successful login. Test folde
 - Sent-folder reconciliation.
 - Read/unread, star, archive, move, and delete.
 
-### Milestone 5 — MCP and Coze
+### Milestone 5 — Open MCP Server
 - Shared application-service tool registry.
 - Streamable HTTP transport.
 - MCP tokens and capability scopes.
 - Read-only tools first, then confirmed state-changing tools.
-- Coze custom MCP connection guide and compatibility test.
+- Platform-neutral MCP endpoint, authentication, and client configuration documentation.
 
 ### Milestone 6 — Hardening and release
 - Security review and dependency audit.
@@ -756,9 +757,10 @@ These projects are references for design decisions, not code to copy.
 - Reference: MCP server implementation and Streamable HTTP / stdio transports.
 - Keep MCP as a transport adapter over application services.
 
-### Coze MCP documentation
-- Custom MCP: https://docs.coze.cn/mcp
-- Current documentation lists Streamable HTTP and SSE support and says stdio is not supported for custom MCP connections. Use Streamable HTTP for MeldMail's Coze integration.
+### MCP protocol and SDK
+- Official MCP specification: https://modelcontextprotocol.io/specification
+- Official Go SDK: https://github.com/modelcontextprotocol/go-sdk
+- Reference: implement the standard MCP server protocol and expose supported transports without coupling the server to a specific client platform.
 
 ### Gmail OAuth / XOAUTH2
 - Documentation: https://developers.google.com/workspace/gmail/imap/xoauth2-protocol
