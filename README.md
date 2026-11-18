@@ -9,7 +9,7 @@ MeldMail brings multiple IMAP email accounts into one clean, responsive web inte
 - Background synchronization that continues when the browser is closed.
 - Metadata-first storage: message bodies and attachments stay in the source mailbox and are fetched on demand.
 - Per-account Direct / HTTP(S) CONNECT / SOCKS5 proxy settings.
-- REST + SSE for the web application, and MCP for AI agents such as Coze.
+- REST + SSE for the web application, and a standard MCP Server for external MCP-compatible clients and AI agents.
 - A single Go service and SQLite database; no Redis, message broker, or separate database server.
 
 ## Project status
