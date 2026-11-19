@@ -1,0 +1,300 @@
+# MeldMail 产品与技术架构全量规范（SPEC.md）
+
+> **致 AI 编程引擎（Codex）的执行指令**：
+> 1. 本文档是 MeldMail 项目的唯一权威设计基准（Gold Standard）。请严格按 **Milestone 0 → Milestone 6** 的顺序推进开发。
+> 2. **阶段门禁**：每完成一个 Milestone，必须编写并运行单元测试与集成验收命令，全部通过后方可进入下一阶段。
+> 3. **严禁越界**：严禁引入 Redis/Kafka/RabbitMQ/独立数据库；严禁违反 256MB 内存红线；严禁将完整邮件正文或附件落盘。
+
+---
+
+## 1. 项目定位与硬性红线
+
+- **产品定位**：轻量、自托管、单进程的多邮箱聚合 Web 客户端 + 标准 MCP Server。将 Gmail、Outlook、163、QQ 等 5～10 个主流邮箱整合到一个响应式 Web 界面中，支持后台持续同步、毫秒级搜索、流畅收发、独立代理连接，并向外部 AI Agent 开放受控邮件能力。
+- **技术栈锁定**：
+  - **后端**：Go 1.22+（单二进制，通过 `embed.FS` 内嵌前端构建产物）。
+  - **前端**：Vue 3 + TypeScript + Vite（PC / 平板 / 手机自适应）。
+  - **数据库**：SQLite（`modernc.org/sqlite` 纯 Go 驱动或 CGO，强制开启 `WAL` + `FTS5`）。
+  - **通信**：REST API + SSE（`/api/events`）+ MCP（Streamable HTTP `/mcp`）。
+- **部署红线**：
+  - **单 Docker 容器**：仅 1 个容器，通过 `docker-compose.yml` 部署与升级。
+  - **纯 HTTP 监听**：容器内仅监听 HTTP（默认 `:8080`），宿主机绑定 `127.0.0.1:8080`，由用户宿主机 Nginx + Certbot 终结 HTTPS。
+- **资源红线（2C2G 宿主机共享环境）**：
+  - Docker 容器硬限制：`mem_limit: 256m`，`cpus: 0.5`。
+  - Go 运行时强制环境变量：`GOMEMLIMIT=200MiB`，`GOGC=50`。
+  - 内存目标：空闲 60～120MB；读取大邮件/下载 20MB 附件时峰值严禁超过 180MB。
+- **存储红线**：SQLite 仅存邮件元数据（Metadata）+ 最多 **500 字符** 纯文本摘要（`snippet`）。**严禁将完整 HTML 正文、原始 MIME 或附件文件写入磁盘**。
+- **开源合规**：Apache License 2.0。所有核心代码独立实现，严禁复制 GPL/LGPL/AGPL 协议邮件项目代码。
+
+---
+
+## 2. 仓库目录结构
+
+```text
+meldmail/
+├── cmd/meldmail/main.go            # 入口：配置加载、DB迁移、Worker启动、HTTP/SSE/MCP服务、优雅退出
+├── internal/
+│   ├── config/                     # 环境变量解析（MELDMAIL_ADDR, DB_PATH, MASTER_KEY, TRUST_PROXY等）
+│   ├── crypto/                     # AES-256-GCM 凭据加解密
+│   ├── storage/                    # SQLite 初始化、PRAGMA、Migration、CRUD、FTS5 检索
+│   ├── proxy/                      # 统一 ProxyDialer（Direct / HTTP CONNECT / HTTPS / SOCKS5）
+│   ├── mail/
+│   │   ├── auth/                   # Authenticator 接口（Password/授权码 + 预留 XOAUTH2）
+│   │   ├── adapter/                # 邮箱协议适配（163 IMAP ID、QQ Re-IDLE、Gmail、Outlook）
+│   │   ├── imapclient/             # go-imap v2 封装（两段式拉取、BODYSTRUCTURE 流式解析）
+│   │   ├── smtpclient/             # go-mail 封装（复用 ProxyDialer 发送/回复/转发）
+│   │   └── syncer/                 # 后台 Worker 管理器（IDLE + Polling + 退避重连 + 并发信号量）
+│   ├── sse/                        # SSE Broker（多端推送新邮件、状态变更、MCP 审批通知）
+│   ├── mcp/                        # MCP Server（Streamable HTTP、Token 鉴权、审批流、审计日志）
+│   └── api/                        # REST API 路由、登录鉴权中间件、Handler、embed.FS 静态托管
+├── web/                            # Vue 3 + TypeScript + Vite 前端工程
+├── migrations/001_init.sql         # SQLite 完整初始化脚本
+├── Dockerfile                      # 多阶段构建（Node -> Go -> Alpine）
+├── docker-compose.yml              # 单容器生产配置（含 256MB / 0.5 CPU 限制）
+├── LICENSE                         # Apache License 2.0
+├── README.md                       # 部署、Nginx 反代与使用文档
+└── SPEC.md                         # 本文档
+```
+
+---
+
+## 3. 数据库与安全设计（SQLite）
+
+### 3.1 连接初始化参数（每次打开 DB 必须执行）
+```sql
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA cache_size = -16000;      -- 限制页缓存上限为 16MB
+PRAGMA temp_store = MEMORY;
+PRAGMA foreign_keys = ON;
+PRAGMA busy_timeout = 5000;
+```
+
+### 3.2 完整建表脚本（`migrations/001_init.sql`）
+```sql
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL,                     -- gmail | 163 | qq | outlook | custom
+    auth_type TEXT NOT NULL DEFAULT 'password', -- password | oauth2
+    imap_host TEXT NOT NULL,
+    imap_port INTEGER NOT NULL DEFAULT 993,
+    imap_tls TEXT NOT NULL DEFAULT 'implicit',  -- implicit | starttls
+    smtp_host TEXT NOT NULL,
+    smtp_port INTEGER NOT NULL DEFAULT 465,
+    smtp_tls TEXT NOT NULL DEFAULT 'implicit',  -- implicit | starttls
+    credentials_enc BLOB NOT NULL,              -- AES-256-GCM 加密的 JSON
+    proxy_mode TEXT NOT NULL DEFAULT 'global',  -- global | direct | http | https | socks5
+    proxy_url_enc BLOB,                         -- AES-256-GCM 加密的代理 URL
+    status TEXT NOT NULL DEFAULT 'active',      -- active | error | paused
+    last_error TEXT NOT NULL DEFAULT '',
+    last_sync_at INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'other',         -- inbox | sent | archive | trash | drafts | other
+    uid_validity INTEGER NOT NULL DEFAULT 0,
+    last_uid INTEGER NOT NULL DEFAULT 0,
+    unread_count INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(account_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS emails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+    uid INTEGER NOT NULL,
+    message_id TEXT NOT NULL DEFAULT '',
+    in_reply_to TEXT NOT NULL DEFAULT '',
+    subject TEXT NOT NULL DEFAULT '',
+    from_name TEXT NOT NULL DEFAULT '',
+    from_addr TEXT NOT NULL DEFAULT '',
+    to_addrs TEXT NOT NULL DEFAULT '[]',
+    cc_addrs TEXT NOT NULL DEFAULT '[]',
+    snippet TEXT NOT NULL DEFAULT '',           -- 纯文本摘要，最多 500 字符
+    has_attachments INTEGER NOT NULL DEFAULT 0,
+    is_read INTEGER NOT NULL DEFAULT 0,
+    is_starred INTEGER NOT NULL DEFAULT 0,
+    date INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(account_id, folder_id, uid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_account_date ON emails(account_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_emails_unread ON emails(is_read, date DESC);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
+    subject, from_name, from_addr, snippet,
+    content='emails', content_rowid='id', tokenize='trigram'
+);
+
+CREATE TRIGGER IF NOT EXISTS emails_ai AFTER INSERT ON emails BEGIN
+    INSERT INTO emails_fts(rowid, subject, from_name, from_addr, snippet)
+    VALUES (new.id, new.subject, new.from_name, new.from_addr, new.snippet);
+END;
+
+CREATE TRIGGER IF NOT EXISTS emails_ad AFTER DELETE ON emails BEGIN
+    INSERT INTO emails_fts(emails_fts, rowid, subject, from_name, from_addr, snippet)
+    VALUES ('delete', old.id, old.subject, old.from_name, old.from_addr, old.snippet);
+END;
+
+CREATE TRIGGER IF NOT EXISTS emails_au AFTER UPDATE OF subject, from_name, from_addr, snippet ON emails BEGIN
+    INSERT INTO emails_fts(emails_fts, rowid, subject, from_name, from_addr, snippet)
+    VALUES ('delete', old.id, old.subject, old.from_name, old.from_addr, old.snippet);
+    INSERT INTO emails_fts(rowid, subject, from_name, from_addr, snippet)
+    VALUES (new.id, new.subject, new.from_name, new.from_addr, new.snippet);
+END;
+
+CREATE TABLE IF NOT EXISTS mcp_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,            -- SHA-256
+    scope TEXT NOT NULL DEFAULT 'readonly',     -- readonly | readwrite
+    require_approval INTEGER NOT NULL DEFAULT 1,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_used_at INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pending_actions (
+    id TEXT PRIMARY KEY,
+    token_id INTEGER NOT NULL REFERENCES mcp_tokens(id) ON DELETE CASCADE,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    action_type TEXT NOT NULL,                  -- send | reply | forward
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',     -- pending | approved | rejected | executed | failed
+    error_msg TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_id INTEGER,
+    tool_name TEXT NOT NULL,
+    args_summary TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,                       -- success | denied | pending | error
+    created_at INTEGER NOT NULL
+);
+```
+
+### 3.3 安全规范
+- **凭据加密**：通过环境变量 `MELDMAIL_MASTER_KEY`（64 位 Hex / 32 字节）使用 `AES-256-GCM` 加密 `credentials_enc` 与 `proxy_url_enc`，密文格式 `nonce(12B) || ciphertext`。未设置时启动报错退出。
+- **Web 认证**：单用户管理员登录（首次启动通过环境变量 `MELDMAIL_ADMIN_PASSWORD` 或 Web 初始化向导设置 bcrypt 哈希存入 `settings`），使用 `HttpOnly` + `SameSite=Lax` Session Cookie；当 `MELDMAIL_TRUST_PROXY=true` 且 `X-Forwarded-Proto: https` 时自动启用 `Secure` 标志。登录接口增加简单内存级速率限制（防暴力破解）。
+
+---
+
+## 4. 核心引擎设计
+
+### 4.1 统一代理层（`internal/proxy`）
+封装统一接口 `DialContext(ctx context.Context, network, addr string) (net.Conn, error)`，支持：
+- `direct`：标准 `net.Dialer`（15s 超时，30s KeepAlive）。
+- `socks5`：`golang.org/x/net/proxy`，支持用户名/密码认证。
+- `http`：TCP 连接代理后发送 `CONNECT target:port HTTP/1.1`（含可选 `Proxy-Authorization: Basic`），校验 `200` 后返回 `net.Conn`。
+- `https`：先与代理建立 TLS 连接，再在 TLS 内执行 `CONNECT` 握手。
+- `global`：读取 `settings` 全局代理配置，未配置则回退 `direct`。
+- **强制要求**：`go-imap`（收）与 `go-mail`（发）均必须通过此 `Dialer` 建立底层连接后再执行隐式 TLS 或 STARTTLS。
+
+### 4.2 主流邮箱适配（`internal/mail/adapter`）
+- **163 / 126**：IMAP `LOGIN` 成功后必须立即发送 RFC 2971 `ID ("name" "MeldMail" "version" "1.0" "vendor" "MeldMail")`。
+- **QQ 邮箱**：IDLE 长连接每 **12 分钟** 主动退出并重新进入 IDLE（Re-IDLE），防止被服务端静默掐断。
+- **Gmail**：一期支持应用专用密码，预留 `Authenticator` 接口用于二期 OAuth2；归档映射为从 `INBOX` 移除标签。
+- **Outlook**：预留 `XOAUTH2` 认证接口与 Refresh Token 刷新钩子。
+
+### 4.3 两段式流式邮件引擎（防 OOM 核心）
+1. **并发控制**：全局信号量 `make(chan struct{}, 3)`，最多允许 3 个账号同时执行拉取同步。
+2. **连接隔离**：每个账号维护 1 条常驻 `IDLE` 连接只盯 `INBOX`；用户点开正文、下载附件、修改状态均通过独立短连接执行，**绝不阻塞 IDLE**。
+3. **阶段 1（后台同步）**：
+   - `UIDVALIDITY` 变更时清空该文件夹本地记录并重置 `last_uid = 0`。
+   - 首次同步默认拉取最近 **100 封**；增量同步仅拉取 `UID > last_uid`。
+   - 单封仅拉取 `UID`、`FLAGS`、`INTERNALDATE`、`ENVELOPE`、`BODYSTRUCTURE` 及 **`BODY.PEEK[TEXT]<0.4096>`**（局部拉取前 4KB，解码清洗后截断至 **500 字符** 存入 `snippet`）。
+   - 每 **45 分钟** 执行一次轻量状态校验（同步已读/删除）；断线采用指数退避重连（5s -> 15s -> 30s -> 60s），连续失败 5 次降级为 3 分钟 Polling。
+4. **阶段 2（按需阅读与流式下载）**：
+   - **正文阅读**：拉取 `BODYSTRUCTURE`，定位 `text/html`（优先）和 `text/plain` 的 `PartID`，定向执行 `BODY.PEEK[<PartID>]`（单封正文硬上限 **5MB**）。服务端使用 `bluemonday` 清洗 HTML（防 XSS）后返回前端。
+   - **附件下载**：根据 `PartID` 定向拉取附件流（`io.Reader`），实时解码并直接 `io.Copy` 写入 HTTP `ResponseWriter`，**严禁 `io.ReadAll` 读入内存**。
+
+---
+
+## 5. 接口契约（REST + SSE + MCP）
+
+### 5.1 REST API & SSE
+- `POST /api/auth/login` / `POST /api/auth/logout` / `GET /api/auth/me`
+- `GET/POST/PUT/DELETE /api/accounts` 及 `POST /api/accounts/test`（测试代理 + IMAP/SMTP 连通性，返回清晰诊断信息）
+- `GET/PUT /api/settings/proxy`（全局默认代理配置）
+- `GET /api/emails?account_id=&folder=&unread=&q=&cursor=&limit=50`（统一收件箱列表 + FTS5 检索）
+- `GET /api/emails/:id`（实时拉取正文 HTML/Text 与附件元信息列表）
+- `GET /api/emails/:id/attachments/:part_id`（流式下载附件）
+- `PATCH /api/emails/:id/flags`（已读/未读/星标/归档/删除：先更新本地 DB 并推送 SSE，再异步同步 IMAP）
+- `POST /api/emails/send`（撰写/回复/转发，走对应账号代理与 SMTP）
+- `GET /api/events`（SSE 长连接，推送 `new_email`、`flag_updated`、`sync_status`、`mcp_approval_required`）
+- `GET/POST/DELETE /api/mcp/tokens` 及 `GET /api/mcp/approvals`、`POST /api/mcp/approvals/:id/approve`、`POST /api/mcp/approvals/:id/reject`
+
+### 5.2 MCP Server（`/mcp` Streamable HTTP）
+- 鉴权：Header `Authorization: Bearer <token>`，比对 `mcp_tokens.token_hash`，记录 `audit_logs`。
+- 开放 9 个标准工具：
+  - **只读（`readonly` / `readwrite`）**：`list_accounts`、`list_emails`、`search_emails`、`get_email`。
+  - **状态（仅 `readwrite`）**：`mark_email_read`、`archive_email`。
+  - **发信（仅 `readwrite`）**：`send_email`、`reply_email`、`forward_email`。若 Token 的 `require_approval=1`，调用后写入 `pending_actions` 并通过 SSE 通知 Web 端弹窗审批，工具返回 `{"status":"pending_approval","action_id":"..."}`；用户在 Web 端点击批准后由后端执行 SMTP 发送。
+
+---
+
+## 6. 单容器部署与 Nginx 反代规范
+
+### 6.1 `docker-compose.yml`
+```yaml
+services:
+  meldmail:
+    build: .
+    image: ghcr.io/nyakooo/meldmail:latest
+    container_name: meldmail
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      - MELDMAIL_ADDR=:8080
+      - MELDMAIL_DB_PATH=/data/meldmail.db
+      - MELDMAIL_MASTER_KEY=${MELDMAIL_MASTER_KEY}
+      - MELDMAIL_ADMIN_PASSWORD=${MELDMAIL_ADMIN_PASSWORD}
+      - MELDMAIL_TRUST_PROXY=true
+      - GOMEMLIMIT=200MiB
+      - GOGC=50
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+```
+
+### 6.2 宿主机 Nginx 反代要求（写入 `README.md`）
+- `/` 常规反代至 `http://127.0.0.1:8080`，透传 `Host`、`X-Real-IP`、`X-Forwarded-For`、`X-Forwarded-Proto`。
+- `/api/events` 与 `/mcp` 必须配置 `proxy_http_version 1.1`、`proxy_set_header Connection ""`、`proxy_buffering off`、`proxy_cache off`、`proxy_read_timeout 86400s`。
+
+---
+
+## 7. 阶段性开发与验收门禁（Milestones）
+
+Codex 必须严格按顺序实现，每阶段提供可复现的测试命令并全部通过：
+
+| 阶段 | 核心交付物 | 阶段性验收标准（Definition of Done） |
+| :--- | :--- | :--- |
+| **M0：工程底座** | Go + Vue 3 目录初始化、`001_init.sql`、SQLite 封装、AES-256-GCM 加解密、登录鉴权、`Dockerfile`、`docker-compose.yml`。 | 1. `docker compose up --build` 成功启动单容器。<br>2. SQLite `PRAGMA journal_mode` 为 `wal`。<br>3. 访问 `http://127.0.0.1:8080` 返回 Vue 页面，空闲内存 < 30MB。<br>4. `go test ./...` 通过。 |
+| **M1：代理与首封同步** | `ProxyDialer`（含单元测试）、163 `IMAP ID` 与主流邮箱预设、账号 CRUD + 连接测试 API、手动触发增量同步。 | 1. `ProxyDialer` 单元测试覆盖 Direct/HTTP/SOCKS5。<br>2. `/api/accounts/test` 诊断逻辑完整。<br>3. 同步后 `emails` 表写入元数据与 ≤500 字 `snippet`，`credentials_enc` 为密文。 |
+| **M2：统一收件箱与搜索** | 统一列表 API、FTS5 `trigram` 搜索、前端响应式三栏/移动端列表与账号筛选界面。 | 1. 多账号邮件混合按时间倒序展示，支持账号/未读筛选。<br>2. FTS5 单元测试验证中文、英文、6 位数字验证码模糊搜索耗时 < 50ms。 |
+| **M3：后台实时同步与 SSE** | 后台 Worker（IDLE + QQ Re-IDLE + 45min 校验 + 指数退避 + 并发信号量 3）与 SSE Broker 推送。 | 1. 浏览器关闭状态下后台持续同步新邮件。<br>2. 前端接入 `/api/events` 自动无刷新插入新邮件。<br>3. 模拟断网恢复后 Worker 自动重连，无 Goroutine 泄漏。 |
+| **M4：完整收发与流式防 OOM** | 按需拉取正文 + `bluemonday` 清洗、流式附件下载、SMTP 撰写/回复/转发、已读/星标/归档双向同步。 | 1. 附件下载采用纯流式 `io.Copy`，大附件测试内存峰值 < 180MB。<br>2. 网页端可正常阅读 HTML 邮件、下载附件、发送/回复/转发邮件。 |
+| **M5：MCP Server 闭环** | `/mcp` Streamable HTTP 服务、9 个标准工具、Token 权限隔离、Web 端审批流弹窗与审计日志。 | 1. 外部 MCP 客户端可列出并调用 9 个工具。<br>2. `readonly` Token 调用 `send_email` 返回 403。<br>3. `readwrite` + `require_approval` 调用 `send_email` 触发 Web 端审批，批准后执行发送。 |
+| **M6：压测与发布收尾** | 竞态检测、内存/并发压测、完善 `README.md`（含 Docker Compose 与 Nginx 反代模板）与 `LICENSE`。 | 1. `go test -race ./...` 100% 通过。<br>2. 前端 `npm run build` 无 TS 报错且正确嵌入 Go 二进制。<br>3. Docker 镜像在 256MB 限制下稳定运行。 |

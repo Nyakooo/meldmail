@@ -1,0 +1,20 @@
+services:
+  meldmail:
+    build: .
+    image: ghcr.io/nyakooo/meldmail:latest
+    container_name: meldmail
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/data
+    env_file:
+      - .env
+    environment:
+      - GOMEMLIMIT=200MiB
+      - GOGC=50
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M

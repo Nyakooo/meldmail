@@ -1,0 +1,30 @@
+# 环境变量与本地数据
+.env
+.env.local
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite*
+
+# Go 构建产物与测试缓存
+bin/
+meldmail
+*.exe
+*.test
+*.out
+coverage.txt
+
+# 前端 Node / Vue 构建产物
+web/node_modules/
+web/dist/
+web/.vite/
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# IDE 与系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
