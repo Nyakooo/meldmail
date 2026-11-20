@@ -25,11 +25,11 @@ type EmailPage struct {
 }
 type emailCursor struct{ Date, ID int64 }
 
-const emailColumns = `e.id,e.account_id,e.folder_id,e.uid,e.message_id,e.in_reply_to,e.subject,e.from_name,e.from_addr,e.to_addrs,e.cc_addrs,e.snippet,e.has_attachments,e.is_read,e.is_starred,e.date,e.created_at`
+const emailColumns = `e.id,e.account_id,e.folder_id,e.uid,e.message_id,e.in_reply_to,e.subject,e.from_name,e.from_addr,e.to_addrs,e.cc_addrs,e.snippet,e.has_attachments,e.is_read,e.is_starred,e.date,e.created_at,f.role`
 
 func scanEmail(row scanner) (Email, error) {
 	var e Email
-	err := row.Scan(&e.ID, &e.AccountID, &e.FolderID, &e.UID, &e.MessageID, &e.InReplyTo, &e.Subject, &e.FromName, &e.FromAddr, &e.ToAddrs, &e.CCAddrs, &e.Snippet, &e.HasAttachments, &e.IsRead, &e.IsStarred, &e.Date, &e.CreatedAt)
+	err := row.Scan(&e.ID, &e.AccountID, &e.FolderID, &e.UID, &e.MessageID, &e.InReplyTo, &e.Subject, &e.FromName, &e.FromAddr, &e.ToAddrs, &e.CCAddrs, &e.Snippet, &e.HasAttachments, &e.IsRead, &e.IsStarred, &e.Date, &e.CreatedAt, &e.FolderRole)
 	if err != nil {
 		return e, fmt.Errorf("storage email: %w", err)
 	}
@@ -43,7 +43,7 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 	if q.Limit < 1 || q.Limit > 100 || q.AccountID < 0 || utf8.RuneCountInString(q.Q) > 256 || len(q.Cursor) > 256 {
 		return page, ErrInvalidQuery
 	}
-	clauses := []string{`NOT EXISTS (SELECT 1 FROM settings pending WHERE pending.key='flag_action:'||e.id AND json_extract(pending.value,'$.change.delete')=1)`}
+	clauses := []string{"NOT " + pendingRemovalSQL("e.id", false)}
 	args := make([]interface{}, 0)
 	if q.AccountID > 0 {
 		clauses = append(clauses, "e.account_id=?")
@@ -56,7 +56,7 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 		clauses = append(clauses, "f.role<>'trash'")
 	}
 	if q.Folder == "inbox" {
-		clauses = append(clauses, `NOT EXISTS (SELECT 1 FROM settings pending WHERE pending.key='flag_action:'||e.id AND json_extract(pending.value,'$.change.archive')=1)`)
+		clauses = append(clauses, "NOT "+pendingRemovalSQL("e.id", true))
 	}
 	if q.Folder != "all" {
 		clauses = append(clauses, "(f.role=? OR f.name=?)")
@@ -121,5 +121,5 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 	return page, nil
 }
 func (s *Store) Email(ctx context.Context, id int64) (Email, error) {
-	return scanEmail(s.DB.QueryRowContext(ctx, "SELECT "+emailColumns+" FROM emails e WHERE e.id=?", id))
+	return scanEmail(s.DB.QueryRowContext(ctx, "SELECT "+emailColumns+" FROM emails e JOIN folders f ON f.id=e.folder_id WHERE e.id=?", id))
 }

@@ -81,10 +81,14 @@ func run() (result error) {
 		}
 	case err := <-workerDone:
 		workerExited = true
-		if err == nil {
-			err = fmt.Errorf("unexpected worker exit")
+		if ctx.Err() == nil {
+			if err == nil {
+				err = fmt.Errorf("unexpected worker exit")
+			}
+			result = fmt.Errorf("background workers stopped: %w", err)
+		} else if err != nil && !errors.Is(err, context.Canceled) {
+			result = fmt.Errorf("background worker shutdown: %w", err)
 		}
-		result = fmt.Errorf("background workers stopped: %w", err)
 	case <-ctx.Done():
 	}
 	cancelRun()

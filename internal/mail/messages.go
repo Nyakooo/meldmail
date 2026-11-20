@@ -88,26 +88,29 @@ func (s *Service) Download(ctx context.Context, id int64, partID string, consume
 func (s *Service) openEmail(ctx context.Context, id int64) (storage.Email, storage.Account, storage.Folder, *imapclient.Client, error) {
 	e, err := s.Store.Email(ctx, id)
 	if err != nil {
-		return e, storage.Account{}, storage.Folder{}, nil, err
+		return e, storage.Account{}, storage.Folder{}, nil, fmt.Errorf("mail load metadata: %w", err)
 	}
 	a, err := s.Store.Account(ctx, e.AccountID)
 	if err != nil {
-		return e, a, storage.Folder{}, nil, err
+		return e, a, storage.Folder{}, nil, fmt.Errorf("mail load account: %w", err)
 	}
 	f, err := s.Store.Folder(ctx, e.FolderID)
 	if err != nil {
-		return e, a, f, nil, err
+		return e, a, f, nil, fmt.Errorf("mail load folder: %w", err)
 	}
 	credentials, err := s.Credentials(a)
 	if err != nil {
-		return e, a, f, nil, err
+		return e, a, f, nil, fmt.Errorf("mail decrypt credentials: %w", err)
 	}
 	dialer, err := s.Dialer(ctx, a)
 	if err != nil {
-		return e, a, f, nil, err
+		return e, a, f, nil, fmt.Errorf("mail resolve proxy: %w", err)
 	}
 	client, err := imapclient.Open(ctx, a, credentials, dialer, s.TLSConfig)
-	return e, a, f, client, err
+	if err != nil {
+		return e, a, f, nil, fmt.Errorf("mail open IMAP: %w", err)
+	}
+	return e, a, f, client, nil
 }
 func (s *Service) acquireInteractive(ctx context.Context, body bool) (func(), error) {
 	if body {

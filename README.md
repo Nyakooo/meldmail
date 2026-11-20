@@ -88,12 +88,12 @@ Attachments are fetched by the exact PartID advertised in BODYSTRUCTURE, transfe
 - `POST /api/emails/send` accepts `account_id`, `to` (address array), optional `cc`, `subject`, `text` or `html`, `action` (`send`, `reply`, `forward`), and `email_id` for replies/forwards.
 - `PATCH /api/emails/:id/flags` accepts `is_read`, `is_starred`, `archive`, or `delete`. A 202 response means the local change is applied and remote synchronization is queued.
 
-Pending flag changes are bounded to 128 metadata-only records in SQLite settings and survive restarts. Reconciliation cannot overwrite them. Failed operations retry with bounded backoff and restore the previous local state after five failures. Archive moves preserve the destination UID; delete moves to Trash rather than expunging unrelated messages. Gmail archive removes the `\Inbox` label using the Gmail IMAP extension and resolves the message in the advertised All Mail folder.
+Pending flag changes are bounded to 128 metadata-only records in SQLite settings and survive restarts. Reconciliation cannot overwrite them. Failed flag operations retry with bounded backoff and restore the previous local state after five failures. Moves retain durable destination checkpoints; uncertain outcomes are recovered without blindly repeating MOVE or rolling back to an obsolete UID. Archive moves preserve the destination UID; delete moves to Trash rather than expunging unrelated messages. Gmail archive removes the `\Inbox` label using the Gmail IMAP extension and resolves the message in the advertised All Mail folder.
 
 M4 acceptance commands:
 
 ```sh
-go test ./internal/mail -run 'TestReadSanitizeAndDecodeAttachment|TestStreaming20MiBAttachment' -v
+go test ./internal/mail -run 'TestReadSanitizeAndDecodeAttachment|TestStreaming20MiBAttachment|TestRecoverAcknowledgedMove' -v
 go test ./internal/mail/adapter -run TestGmailArchiveRemovesInboxLabel -v
 go test ./internal/storage -run TestDurableOptimisticFlagAction -v
 MELDMAIL_PLAYWRIGHT_MODULE=/tmp/meldmail-browser/node_modules/playwright go test ./internal/api -run TestMailActionsBrowser -v

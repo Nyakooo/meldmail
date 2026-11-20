@@ -93,7 +93,7 @@ func TestGmailArchiveRemovesInboxLabel(t *testing.T) {
 	address := ln.Addr().(*net.TCPAddr)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	uid, validity, err := GmailArchive(ctx, storage.Account{Email: "test@gmail.com", Provider: "gmail", IMAPHost: "127.0.0.1", IMAPPort: address.Port, IMAPTLS: "implicit"}, auth.Credentials{Password: "fixture"}, d, &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, storage.Folder{Name: "INBOX", UIDValidity: 101}, 7, "[Gmail]/All Mail", "original@example.com")
+	uid, validity, err := GmailArchive(ctx, storage.Account{Email: "test@gmail.com", Provider: "gmail", IMAPHost: "127.0.0.1", IMAPPort: address.Port, IMAPTLS: "implicit"}, auth.Credentials{Password: "fixture"}, d, &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, storage.Folder{Name: "INBOX", UIDValidity: 101}, 7, "[Gmail]/All Mail", "original@example.com", func(uint32, uint32, bool) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

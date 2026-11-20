@@ -4,7 +4,7 @@ export interface Account {
  proxy_mode: string; status: string; last_error: string; last_sync_at: number;
 }
 export interface Email {
- id: number; account_id: number; folder_id: number; uid: number; subject: string; from_name: string; from_addr: string;
+ id: number; account_id: number; folder_id: number; folder_role: string; uid: number; subject: string; from_name: string; from_addr: string;
  to_addrs: string; cc_addrs: string; snippet: string; has_attachments: boolean; is_read: boolean; is_starred: boolean; date: number;
 }
 export interface EmailPage { emails: Email[]; next_cursor: string }

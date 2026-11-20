@@ -107,6 +107,20 @@ func TestMailActionsBrowser(t *testing.T) {
 		}
 		writeJSON(w, map[string]int{"pending": len(actions)})
 	})
+
+	mux.HandleFunc("POST /fixture/incoming", func(w http.ResponseWriter, r *http.Request) {
+		if _, err := fixture.User.Append("INBOX", strings.NewReader("From: new@example.com\r\nSubject: New Inbox arrival\r\nContent-Type: text/plain\r\n\r\nInbox only"), &imap.AppendOptions{Time: time.Now()}); err != nil {
+			t.Error(err)
+			http.Error(w, "failed", 500)
+			return
+		}
+		if _, err := service.Sync(r.Context(), account.ID); err != nil {
+			t.Error(err)
+			http.Error(w, "failed", 500)
+			return
+		}
+		w.WriteHeader(204)
+	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	defer server.CloseClientConnections()
@@ -118,6 +132,7 @@ const {chromium}=require(process.env.MELDMAIL_PLAYWRIGHT_MODULE);
   const page=await browser.newPage({viewport:{width:1440,height:960}});page.setDefaultTimeout(5000);const errors=[];let tracker=false;
   page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.url().includes('tracker.invalid'))tracker=true});
   const settled=async()=>{for(let i=0;i<200;i++){const response=await page.request.get(process.env.MELDMAIL_BROWSER_URL+'/fixture/settled');if((await response.json()).pending===0)return;await new Promise(r=>setTimeout(r,10))}throw new Error('flags did not settle')};
+  await page.addInitScript(()=>{window.__mailEventCount=0;const Native=window.EventSource;window.EventSource=class extends Native{constructor(...args){super(...args);this.addEventListener('new_email',()=>{window.__mailEventCount++})}}});
   await page.goto(process.env.MELDMAIL_BROWSER_URL);await page.getByLabel('管理员密码',{exact:true}).fill('fixture-admin');await page.getByRole('button',{name:'登录工作台 →',exact:true}).click();
   await page.locator('.email-item').first().click();
   await page.frameLocator('iframe[title="邮件正文"]').getByRole('heading',{name:'HTML body',exact:true}).waitFor();
@@ -130,7 +145,9 @@ const {chromium}=require(process.env.MELDMAIL_PLAYWRIGHT_MODULE);
   await page.getByRole('button',{name:'☆ 星标',exact:true}).click();await settled();await page.getByRole('button',{name:'★ 取消星标',exact:true}).waitFor();
   await page.getByRole('button',{name:'归档',exact:true}).click();await settled();await page.waitForFunction(()=>document.querySelectorAll('.email-item').length===0);
   await page.getByRole('button',{name:/已归档/}).click();await page.locator('.email-item').first().click();await page.frameLocator('iframe[title="邮件正文"]').getByRole('heading',{name:'HTML body',exact:true}).waitFor();
+  const incoming=async()=>{const before=await page.evaluate(()=>window.__mailEventCount);const response=await page.request.post(process.env.MELDMAIL_BROWSER_URL+'/fixture/incoming');if(!response.ok())throw new Error('incoming fixture failed');await page.waitForFunction(n=>window.__mailEventCount>n,before);if(await page.locator('.email-item').count()!==1)throw new Error('Inbox arrival leaked into a different folder')};await incoming();
   await page.setViewportSize({width:390,height:844});page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'删除',exact:true}).click();await settled();await page.getByLabel('打开导航',{exact:true}).click();await page.getByRole('button',{name:/废纸篓/}).click();await page.waitForFunction(()=>document.querySelectorAll('.email-item').length===1);
+  await incoming();
   if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('mobile overflow');if(tracker)throw new Error('remote tracker requested');if(errors.length)throw new Error(errors.join('\n'));
   console.log('PASS: HTML reading, authenticated attachment download, compose/reply/forward, star/archive/trash, desktop/mobile; no XSS/tracker requests');
  }finally{await browser.close()}

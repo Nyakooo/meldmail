@@ -59,12 +59,21 @@ async function sync() {
 }
 function matches(email: Email): boolean {
  if (accountId.value && email.account_id !== accountId.value || unread.value && email.is_read) return false
- if (folder.value === 'inbox') { const existing = emails.value.find(e => e.id === email.id); if (existing && existing.folder_id !== email.folder_id) return false }
+ if (email.folder_role && (folder.value === 'all' ? email.folder_role === 'trash' : email.folder_role !== folder.value)) return false
  const text = query.value.trim().toLowerCase()
  return !text || [email.subject, email.from_name, email.from_addr, email.snippet].some(value => value.toLowerCase().includes(text))
 }
 function applyFlags(update: EmailUpdate) {
- if (update.deleted || update.archived && folder.value === 'inbox') { emails.value = emails.value.filter(email => email.id !== update.id); if (selected.value?.id === update.id) selected.value = null; return }
+ if (update.deleted || update.archived) {
+  if (update.pending === false && update.folder_role && typeof update.subject === 'string') {
+   const moved = update as Email
+   emails.value = emails.value.filter(email => email.id !== moved.id)
+   if (matches(moved)) { emails.value.push(moved); emails.value.sort((a, b) => b.date - a.date || b.id - a.id) }
+   if (selected.value?.id === moved.id) { if (matches(moved)) Object.assign(selected.value, moved); else selected.value = null }
+   return
+  }
+  if (update.deleted || folder.value === 'inbox') { emails.value = emails.value.filter(email => email.id !== update.id); if (selected.value?.id === update.id) selected.value = null; return }
+ }
  const existing = emails.value.find(email => email.id === update.id)
  if (existing) { Object.assign(existing, update); if (!matches(existing)) emails.value = emails.value.filter(email => email.id !== update.id) }
  if (selected.value?.id === update.id) Object.assign(selected.value, update)
@@ -76,6 +85,7 @@ function startEvents() {
  events.onerror = () => { connected.value = false }
  events.addEventListener('new_email', (event: MessageEvent<string>) => {
   try { const email = JSON.parse(event.data) as Email
+   if (!email.folder_role) { void loadEmails(); return }
    emails.value = emails.value.filter(item => item.id !== email.id)
    if (matches(email)) { emails.value.push(email); emails.value.sort((a, b) => b.date - a.date || b.id - a.id) }
   } catch { error.value = '邮件更新失败，请重新加载列表' }

@@ -3,6 +3,8 @@ package imapclient
 import (
 	"context"
 	"fmt"
+	upstream "github.com/emersion/go-imap/v2/imapclient"
+	"io"
 	"strings"
 
 	"github.com/emersion/go-imap/v2"
@@ -10,11 +12,12 @@ import (
 )
 
 type MoveResult struct {
+	Acknowledged     bool
 	Name, Role       string
 	UIDValidity, UID uint32
 }
 
-func (c *Client) ApplyFlags(ctx context.Context, a storage.Account, action storage.FlagAction) (*MoveResult, error) {
+func (c *Client) ApplyFlags(ctx context.Context, a storage.Account, action storage.FlagAction, checkpoint func(MoveResult) error) (*MoveResult, error) {
 	e := storage.Email{UID: action.UID}
 	if err := c.SelectMessage(ctx, e, action.Folder); err != nil {
 		return nil, err
@@ -86,9 +89,19 @@ func (c *Client) ApplyFlags(ctx context.Context, a storage.Account, action stora
 	if !c.IMAP.Caps().Has(imap.CapUIDPlus) && action.MessageID == "" {
 		return nil, fmt.Errorf("imap: move UID cannot be resolved without UIDPLUS or Message-ID")
 	}
+	if err := checkpoint(MoveResult{Name: target, Role: role}); err != nil {
+		return nil, err
+	}
 	moved, err := c.IMAP.Move(set, target).Wait()
 	if err != nil {
 		return nil, fmt.Errorf("imap move: %w", err)
+	}
+	acknowledged := MoveResult{Name: target, Role: role, Acknowledged: true, UIDValidity: moved.UIDValidity}
+	if destination, ok := moved.DestUIDs.(imap.UIDSet); ok && len(destination) == 1 && destination[0].Start == destination[0].Stop {
+		acknowledged.UID = uint32(destination[0].Start)
+	}
+	if err := checkpoint(acknowledged); err != nil {
+		return nil, err
 	}
 	selected, err := c.IMAP.Select(target, nil).Wait()
 	if err != nil {
@@ -111,4 +124,74 @@ func (c *Client) ApplyFlags(ctx context.Context, a storage.Account, action stora
 		return nil, fmt.Errorf("imap: destination UID is ambiguous")
 	}
 	return &MoveResult{Name: target, Role: role, UIDValidity: selected.UIDValidity, UID: uid}, nil
+}
+
+// RecoverMove never repeats MOVE after its source UID has disappeared. It uses
+// the persisted destination mapping (or an unambiguous Message-ID search).
+func (c *Client) RecoverMove(ctx context.Context, action storage.FlagAction) (*MoveResult, error) {
+	if err := c.SelectMessage(ctx, storage.Email{UID: action.UID}, action.Folder); err != nil {
+		return nil, err
+	}
+	exists, err := c.hasUID(action.UID)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		if action.MoveAcknowledged {
+			return nil, fmt.Errorf("imap: acknowledged move still has a source UID")
+		}
+		return nil, nil
+	}
+	selected, err := c.IMAP.Select(action.DestinationName, nil).Wait()
+	if err != nil {
+		return nil, fmt.Errorf("imap recover destination: %w", err)
+	}
+	uid := action.DestinationUID
+	if action.DestinationValidity != 0 && selected.UIDValidity != action.DestinationValidity {
+		uid = 0
+	}
+	if uid != 0 {
+		found, err := c.hasUID(uid)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			uid = 0
+		}
+	}
+	if uid == 0 && action.MessageID != "" {
+		data, err := c.IMAP.UIDSearch(&imap.SearchCriteria{Header: []imap.SearchCriteriaHeaderField{{Key: "Message-ID", Value: strings.Trim(action.MessageID, "<>")}}}, nil).Wait()
+		if err != nil {
+			return nil, fmt.Errorf("imap recover UID: %w", err)
+		}
+		if set, ok := data.All.(imap.UIDSet); ok && len(set) == 1 && set[0].Start == set[0].Stop {
+			uid = uint32(set[0].Start)
+		}
+	}
+	if uid == 0 {
+		return nil, fmt.Errorf("imap: moved message destination cannot yet be resolved")
+	}
+	return &MoveResult{Name: action.DestinationName, Role: action.DestinationRole, UIDValidity: selected.UIDValidity, UID: uid}, nil
+}
+func (c *Client) hasUID(uid uint32) (bool, error) {
+	command := c.IMAP.Fetch(imap.UIDSetNum(imap.UID(uid)), &imap.FetchOptions{UID: true})
+	found := false
+	for msg := command.Next(); msg != nil; msg = command.Next() {
+		for item := msg.Next(); item != nil; item = msg.Next() {
+			switch v := item.(type) {
+			case upstream.FetchItemDataUID:
+				found = uint32(v.UID) == uid
+			case upstream.FetchItemDataBodySection:
+				if v.Literal != nil {
+					if _, err := io.Copy(io.Discard, v.Literal); err != nil {
+						return false, c.abortFetch(command, err)
+					}
+				}
+			}
+		}
+	}
+	if err := command.Close(); err != nil {
+		return false, fmt.Errorf("imap verify UID: %w", err)
+	}
+	return found, nil
 }

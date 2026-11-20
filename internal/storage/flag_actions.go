@@ -24,6 +24,13 @@ func (c FlagChange) Valid() bool {
 }
 
 type FlagAction struct {
+	MoveAcknowledged    bool   `json:"move_acknowledged,omitempty"`
+	DestinationName     string `json:"destination_name,omitempty"`
+	DestinationRole     string `json:"destination_role,omitempty"`
+	DestinationUID      uint32 `json:"destination_uid,omitempty"`
+	DestinationValidity uint32 `json:"destination_validity,omitempty"`
+	MoveStarted         bool   `json:"move_started,omitempty"`
+
 	EmailID    int64      `json:"email_id"`
 	AccountID  int64      `json:"account_id"`
 	Folder     Folder     `json:"folder"`
@@ -36,7 +43,20 @@ type FlagAction struct {
 	NextAt     int64      `json:"next_at"`
 }
 
-func flagKey(id int64) string { return "flag_action:" + strconv.FormatInt(id, 10) }
+const flagKeyPrefix = "flag_action:"
+
+// idSQL is a trusted column reference supplied only by this storage package.
+func pendingFlagsSQL(idSQL string) string {
+	return "EXISTS(SELECT 1 FROM settings pending WHERE pending.key='" + flagKeyPrefix + "'||" + idSQL + ")"
+}
+func pendingRemovalSQL(idSQL string, archive bool) string {
+	field := "delete"
+	if archive {
+		field = "archive"
+	}
+	return "EXISTS(SELECT 1 FROM settings pending WHERE pending.key='" + flagKeyPrefix + "'||" + idSQL + " AND json_extract(pending.value,'$.change." + field + "')=1)"
+}
+func flagKey(id int64) string { return flagKeyPrefix + strconv.FormatInt(id, 10) }
 func (s *Store) QueueFlags(ctx context.Context, id int64, change FlagChange) (updated Email, resultErr error) {
 	if !change.Valid() {
 		return Email{}, ErrInvalidQuery
@@ -52,7 +72,7 @@ func (s *Store) QueueFlags(ctx context.Context, id int64, change FlagChange) (up
 			}
 		}
 	}()
-	e, err := scanEmail(tx.QueryRowContext(ctx, "SELECT "+emailColumns+" FROM emails e WHERE e.id=?", id))
+	e, err := scanEmail(tx.QueryRowContext(ctx, "SELECT "+emailColumns+" FROM emails e JOIN folders f ON f.id=e.folder_id WHERE e.id=?", id))
 	if err != nil {
 		return e, err
 	}
@@ -63,7 +83,7 @@ func (s *Store) QueueFlags(ctx context.Context, id int64, change FlagChange) (up
 	if count > 0 {
 		return e, ErrActionPending
 	}
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM settings WHERE key LIKE 'flag_action:%'").Scan(&count); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM settings WHERE key GLOB 'flag_action:*'").Scan(&count); err != nil {
 		return e, fmt.Errorf("storage flag count: %w", err)
 	}
 	if count >= 128 {
@@ -96,7 +116,7 @@ func (s *Store) QueueFlags(ctx context.Context, id int64, change FlagChange) (up
 	return e, nil
 }
 func (s *Store) FlagActions(ctx context.Context) (actions []FlagAction, resultErr error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT value FROM settings WHERE key LIKE 'flag_action:%' ORDER BY updated_at,key LIMIT 128")
+	rows, err := s.DB.QueryContext(ctx, "SELECT value FROM settings WHERE key GLOB 'flag_action:*' ORDER BY updated_at,key LIMIT 128")
 	if err != nil {
 		return nil, fmt.Errorf("storage flag actions: %w", err)
 	}

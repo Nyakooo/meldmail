@@ -15,7 +15,7 @@ type EmailFlags struct {
 }
 
 func (s *Store) FlagBatch(ctx context.Context, folderID int64, after uint32) (batch []EmailFlags, resultErr error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT id,uid,is_read,is_starred FROM emails WHERE folder_id=? AND uid>? AND NOT EXISTS(SELECT 1 FROM settings WHERE key='flag_action:'||emails.id) ORDER BY uid LIMIT 100", folderID, after)
+	rows, err := s.DB.QueryContext(ctx, "SELECT id,uid,is_read,is_starred FROM emails WHERE folder_id=? AND uid>? AND NOT "+pendingFlagsSQL("emails.id")+" ORDER BY uid LIMIT 100", folderID, after)
 	if err != nil {
 		return nil, fmt.Errorf("storage flag batch: %w", err)
 	}

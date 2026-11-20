@@ -29,7 +29,7 @@ type ContextDialer interface {
 var validityPattern = regexp.MustCompile(`(?i)\[UIDVALIDITY ([0-9]+)\]`)
 var gmailIDPattern = regexp.MustCompile(`(?i)X-GM-MSGID ([0-9]+)`)
 
-func GmailArchive(ctx context.Context, a storage.Account, credentials auth.Credentials, d ContextDialer, cfg *tls.Config, source storage.Folder, uid uint32, allMail, messageID string) (destinationUID, validity uint32, result error) {
+func GmailArchive(ctx context.Context, a storage.Account, credentials auth.Credentials, d ContextDialer, cfg *tls.Config, source storage.Folder, uid uint32, allMail, messageID string, checkpoint func(uint32, uint32, bool) error) (destinationUID, validity uint32, result error) {
 	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(a.IMAPHost, strconv.Itoa(a.IMAPPort)))
 	if err != nil {
 		return 0, 0, fmt.Errorf("gmail archive dial: %w", err)
@@ -67,7 +67,10 @@ func GmailArchive(ctx context.Context, a storage.Account, credentials auth.Crede
 	}
 	reader := bufio.NewReaderSize(conn, 64*1024)
 	greeting, err := readGmailLine(reader)
-	if err != nil || !strings.HasPrefix(greeting, "* OK") {
+	if err != nil {
+		return 0, 0, fmt.Errorf("gmail archive greeting: %w", err)
+	}
+	if !strings.HasPrefix(greeting, "* OK") {
 		return 0, 0, fmt.Errorf("gmail archive: invalid greeting")
 	}
 	sequence := 0
@@ -213,14 +216,23 @@ func GmailArchive(ctx context.Context, a storage.Account, credentials auth.Crede
 		return 0, 0, fmt.Errorf("gmail archive: All Mail UID is ambiguous")
 	}
 	if gmailID == "" {
+		if err := checkpoint(destinationUID, validity, true); err != nil {
+			return 0, 0, err
+		}
 		return destinationUID, validity, nil
 	} // Already removed from Inbox on a previous attempt.
+	if err := checkpoint(destinationUID, validity, false); err != nil {
+		return 0, 0, err
+	}
 	if selected, err := selectFolder(source.Name); err != nil {
 		return 0, 0, err
 	} else if selected != source.UIDValidity {
 		return 0, 0, fmt.Errorf("gmail archive: source UIDVALIDITY changed")
 	}
 	if _, err := command(fmt.Sprintf("UID STORE %d -X-GM-LABELS.SILENT (\\Inbox)", uid)); err != nil {
+		return 0, 0, err
+	}
+	if err := checkpoint(destinationUID, validity, true); err != nil {
 		return 0, 0, err
 	}
 	return destinationUID, validity, nil

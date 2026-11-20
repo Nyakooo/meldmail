@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/emersion/go-imap/v2"
@@ -14,6 +15,7 @@ import (
 )
 
 type Fixture struct {
+	failSelect           atomic.Pointer[string]
 	User                 *imapmemserver.User
 	Port                 int
 	ServerTLS, ClientTLS *tls.Config
@@ -26,14 +28,13 @@ func IMAP(t *testing.T, email, password string) *Fixture {
 	roots := x509.NewCertPool()
 	roots.AddCert(certificate.Certificate())
 	certificate.Close()
-	backend := imapmemserver.New()
 	user := imapmemserver.NewUser(email, password)
-	backend.AddUser(user)
 	if err := user.Create("INBOX", nil); err != nil {
 		t.Fatal(err)
 	}
+	fixture := &Fixture{User: user, ServerTLS: cfg, ClientTLS: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}
 	server := imapserver.New(&imapserver.Options{TLSConfig: cfg, Caps: imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapUIDPlus: {}, imap.CapMove: {}}, NewSession: func(c *imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
-		return backend.NewSession(), nil, nil
+		return &faultSession{UserSession: imapmemserver.NewUserSession(user), fixture: fixture}, nil, nil
 	}})
 	listener, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
 	if err != nil {
@@ -49,5 +50,20 @@ func IMAP(t *testing.T, email, password string) *Fixture {
 			t.Error(err)
 		}
 	})
-	return &Fixture{User: user, Port: listener.Addr().(*net.TCPAddr).Port, ServerTLS: cfg, ClientTLS: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}
+	fixture.Port = listener.Addr().(*net.TCPAddr).Port
+	return fixture
+}
+
+func (f *Fixture) FailNextSelect(name string) { f.failSelect.Store(&name) }
+
+type faultSession struct {
+	*imapmemserver.UserSession
+	fixture *Fixture
+}
+
+func (s *faultSession) Select(name string, options *imap.SelectOptions) (*imap.SelectData, error) {
+	if fault := s.fixture.failSelect.Load(); fault != nil && *fault == name && s.fixture.failSelect.CompareAndSwap(fault, nil) {
+		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Text: "injected destination selection failure"}
+	}
+	return s.UserSession.Select(name, options)
 }

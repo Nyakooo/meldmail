@@ -14,6 +14,7 @@ type Folder struct {
 }
 type Email struct {
 	ID             int64  `json:"id"`
+	FolderRole     string `json:"folder_role"`
 	AccountID      int64  `json:"account_id"`
 	FolderID       int64  `json:"folder_id"`
 	UID            uint32 `json:"uid"`
@@ -95,10 +96,10 @@ func (s *Store) SaveMetadata(ctx context.Context, f Folder, e Email) (result Ema
 	e.AccountID = f.AccountID
 	e.FolderID = f.ID
 	e.CreatedAt = time.Now().Unix()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO emails(account_id,folder_id,uid,message_id,in_reply_to,subject,from_name,from_addr,to_addrs,cc_addrs,snippet,has_attachments,is_read,is_starred,date,created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM folders WHERE id=? AND account_id=? AND uid_validity=?) ON CONFLICT(account_id,folder_id,uid) DO UPDATE SET is_read=CASE WHEN EXISTS(SELECT 1 FROM settings WHERE key='flag_action:'||emails.id) THEN emails.is_read ELSE excluded.is_read END,is_starred=CASE WHEN EXISTS(SELECT 1 FROM settings WHERE key='flag_action:'||emails.id) THEN emails.is_starred ELSE excluded.is_starred END`, e.AccountID, e.FolderID, e.UID, e.MessageID, e.InReplyTo, e.Subject, e.FromName, e.FromAddr, e.ToAddrs, e.CCAddrs, e.Snippet, e.HasAttachments, e.IsRead, e.IsStarred, e.Date, e.CreatedAt, f.ID, f.AccountID, f.UIDValidity); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO emails(account_id,folder_id,uid,message_id,in_reply_to,subject,from_name,from_addr,to_addrs,cc_addrs,snippet,has_attachments,is_read,is_starred,date,created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM folders WHERE id=? AND account_id=? AND uid_validity=?) ON CONFLICT(account_id,folder_id,uid) DO UPDATE SET is_read=CASE WHEN `+pendingFlagsSQL("emails.id")+` THEN emails.is_read ELSE excluded.is_read END,is_starred=CASE WHEN `+pendingFlagsSQL("emails.id")+` THEN emails.is_starred ELSE excluded.is_starred END`, e.AccountID, e.FolderID, e.UID, e.MessageID, e.InReplyTo, e.Subject, e.FromName, e.FromAddr, e.ToAddrs, e.CCAddrs, e.Snippet, e.HasAttachments, e.IsRead, e.IsStarred, e.Date, e.CreatedAt, f.ID, f.AccountID, f.UIDValidity); err != nil {
 		return Email{}, fmt.Errorf("storage save metadata: %w", err)
 	}
-	e, err = scanEmail(tx.QueryRowContext(ctx, "SELECT "+emailColumns+" FROM emails e WHERE account_id=? AND folder_id=? AND uid=?", f.AccountID, f.ID, e.UID))
+	e, err = scanEmail(tx.QueryRowContext(ctx, "SELECT "+emailColumns+" FROM emails e JOIN folders f ON f.id=e.folder_id WHERE e.account_id=? AND e.folder_id=? AND e.uid=?", f.AccountID, f.ID, e.UID))
 	if err != nil {
 		return Email{}, fmt.Errorf("storage saved metadata: %w", err)
 	}

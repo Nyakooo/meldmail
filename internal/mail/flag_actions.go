@@ -65,7 +65,7 @@ func (s *Service) ProcessFlagActions(ctx context.Context) error {
 		if action.NextAt > time.Now().UnixMilli() {
 			continue
 		}
-		destination, uid, err := s.applyFlagAction(ctx, action)
+		destination, uid, err := s.applyFlagAction(ctx, &action)
 		if errors.Is(err, syncer.ErrBusy) {
 			continue
 		}
@@ -80,7 +80,7 @@ func (s *Service) ProcessFlagActions(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if err := s.Events.Publish("flag_updated", map[string]interface{}{"id": e.ID, "is_read": e.IsRead, "is_starred": e.IsStarred, "folder_id": e.FolderID, "uid": e.UID, "archived": action.Change.Archive, "deleted": action.Change.Delete, "pending": false}); err != nil {
+			if err := s.Events.Publish("flag_updated", flagEvent{Email: e, Archived: action.Change.Archive, Deleted: action.Change.Delete, Pending: false}); err != nil {
 				return err
 			}
 			continue
@@ -89,7 +89,7 @@ func (s *Service) ProcessFlagActions(ctx context.Context) error {
 			return ctx.Err()
 		}
 		action.Attempts++
-		if action.Attempts >= 5 || errors.Is(err, sql.ErrNoRows) || errors.Is(err, imapclient.ErrMessageGone) {
+		if (action.Attempts >= 5 && !action.MoveStarted) || errors.Is(err, sql.ErrNoRows) || errors.Is(err, imapclient.ErrMessageGone) {
 			if err := s.Store.FinishFlagAction(ctx, action, nil, 0, true); err != nil {
 				return err
 			}
@@ -104,7 +104,11 @@ func (s *Service) ProcessFlagActions(ctx context.Context) error {
 			}
 		} else {
 			delays := []time.Duration{5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
-			action.NextAt = time.Now().Add(delays[action.Attempts-1]).UnixMilli()
+			index := action.Attempts - 1
+			if index >= len(delays) {
+				index = len(delays) - 1
+			}
+			action.NextAt = time.Now().Add(delays[index]).UnixMilli()
 			if err := s.Store.RetryFlagAction(ctx, action); err != nil {
 				return err
 			}
@@ -115,7 +119,7 @@ func (s *Service) ProcessFlagActions(ctx context.Context) error {
 	}
 	return nil
 }
-func (s *Service) applyFlagAction(ctx context.Context, action storage.FlagAction) (destination *storage.Folder, uid uint32, result error) {
+func (s *Service) applyFlagAction(ctx context.Context, action *storage.FlagAction) (destination *storage.Folder, uid uint32, result error) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	release, err := s.Limiter.Acquire(ctx, action.AccountID)
@@ -144,7 +148,27 @@ func (s *Service) applyFlagAction(ctx context.Context, action storage.FlagAction
 			result = errors.Join(result, err)
 		}
 	}()
-	moved, err := client.ApplyFlags(ctx, a, action)
+	var moved *imapclient.MoveResult
+	if action.MoveStarted && action.DestinationName != "" {
+		moved, err = client.RecoverMove(ctx, *action)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	if moved == nil {
+		moved, err = client.ApplyFlags(ctx, a, *action, func(checkpoint imapclient.MoveResult) error {
+			action.MoveStarted = true
+			action.MoveAcknowledged = checkpoint.Acknowledged
+			action.DestinationName = checkpoint.Name
+			action.DestinationRole = checkpoint.Role
+			if checkpoint.UID != 0 {
+				action.DestinationUID = checkpoint.UID
+				action.DestinationValidity = checkpoint.UIDValidity
+			}
+			return s.Store.RetryFlagAction(ctx, *action)
+		})
+	}
+
 	if err != nil {
 		return nil, 0, err
 	}
@@ -152,7 +176,15 @@ func (s *Service) applyFlagAction(ctx context.Context, action storage.FlagAction
 		return nil, 0, nil
 	}
 	if a.Provider == "gmail" && action.Change.Archive {
-		moved.UID, moved.UIDValidity, err = adapter.GmailArchive(ctx, a, credentials, d, s.TLSConfig, action.Folder, action.UID, moved.Name, action.MessageID)
+		moved.UID, moved.UIDValidity, err = adapter.GmailArchive(ctx, a, credentials, d, s.TLSConfig, action.Folder, action.UID, moved.Name, action.MessageID, func(uid, validity uint32, acknowledged bool) error {
+			action.MoveStarted = true
+			action.MoveAcknowledged = acknowledged
+			action.DestinationName = moved.Name
+			action.DestinationRole = moved.Role
+			action.DestinationUID = uid
+			action.DestinationValidity = validity
+			return s.Store.RetryFlagAction(ctx, *action)
+		})
 		if err != nil {
 			return nil, 0, err
 		}
@@ -162,4 +194,11 @@ func (s *Service) applyFlagAction(ctx context.Context, action storage.FlagAction
 		return nil, 0, fmt.Errorf("flag destination cache: %w", err)
 	}
 	return &f, moved.UID, nil
+}
+
+type flagEvent struct {
+	storage.Email
+	Archived bool `json:"archived"`
+	Deleted  bool `json:"deleted"`
+	Pending  bool `json:"pending"`
 }
