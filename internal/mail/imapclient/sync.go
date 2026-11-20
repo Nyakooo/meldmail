@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
+	"net"
 	"net/textproto"
 	"strings"
 	"unicode"
@@ -21,7 +23,7 @@ import (
 	"golang.org/x/net/html/charset"
 )
 
-func (c *Client) Sync(ctx context.Context, s *storage.Store, a storage.Account) (int, error) {
+func (c *Client) Sync(ctx context.Context, s *storage.Store, a storage.Account, onEmail func(storage.Email) error) (int, error) {
 	selected, err := c.IMAP.Select("INBOX", nil).Wait()
 	if err != nil {
 		return 0, fmt.Errorf("imap select: %w", err)
@@ -53,19 +55,19 @@ func (c *Client) Sync(ctx context.Context, s *storage.Store, a storage.Account) 
 	for msg := command.Next(); msg != nil; msg = command.Next() {
 		e, err := metadata(msg)
 		if err != nil {
-			if closeErr := c.Close(); closeErr != nil {
-				return count, fmt.Errorf("imap metadata %v; close: %w", err, closeErr)
-			}
-			return count, err
+			return count, c.abortFetch(command, err)
 		}
 		if e.UID <= f.LastUID {
 			continue
 		}
-		if _, err := s.SaveMetadata(ctx, f, e); err != nil {
-			if closeErr := c.Close(); closeErr != nil {
-				return count, fmt.Errorf("imap persist %v; close: %w", err, closeErr)
+		saved, err := s.SaveMetadata(ctx, f, e)
+		if err != nil {
+			return count, c.abortFetch(command, err)
+		}
+		if onEmail != nil {
+			if err := onEmail(saved); err != nil {
+				return count, c.abortFetch(command, err)
 			}
-			return count, err
 		}
 		if e.UID > highestUID {
 			highestUID = e.UID
@@ -272,4 +274,16 @@ func multipartSnippet(reader *multipart.Reader, depth int) string {
 		}
 	}
 	return ""
+}
+
+func (c *Client) abortFetch(command *upstream.FetchCommand, cause error) error {
+	if err := c.conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		cause = errors.Join(cause, fmt.Errorf("imap abort connection: %w", err))
+	}
+	// Drain after closing the socket: this releases blocked literal/message channels
+	// without consuming an unbounded server payload or waiting on a live connection.
+	if err := command.Close(); err != nil {
+		cause = errors.Join(cause, fmt.Errorf("imap abort fetch: %w", err))
+	}
+	return cause
 }

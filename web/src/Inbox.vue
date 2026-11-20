@@ -18,6 +18,8 @@ const syncing = ref(false)
 const error = ref('')
 const sidebarOpen = ref(false)
 let searchTimer: ReturnType<typeof setTimeout> | undefined
+const connected = ref(false)
+let events: EventSource | undefined
 let sequence = 0
 let activeRequest: AbortController | undefined
 const accountName = (id: number) => { const a = accounts.value.find(a => a.id === id); return a?.display_name || a?.email || '邮箱' }
@@ -51,8 +53,37 @@ async function sync() {
   await loadAccounts(); await loadEmails()
  } catch (err) { error.value = errorMessage(err) } finally { syncing.value = false }
 }
-onMounted(async () => { try { await loadAccounts(); await loadEmails() } catch (err) { error.value = errorMessage(err) } })
-onBeforeUnmount(() => { clearTimeout(searchTimer); activeRequest?.abort() })
+function matches(email: Email): boolean {
+ if (accountId.value && email.account_id !== accountId.value || unread.value && email.is_read) return false
+ if (folder.value === 'inbox') { const existing = emails.value.find(e => e.id === email.id); if (existing && existing.folder_id !== email.folder_id) return false }
+ const text = query.value.trim().toLowerCase()
+ return !text || [email.subject, email.from_name, email.from_addr, email.snippet].some(value => value.toLowerCase().includes(text))
+}
+function startEvents() {
+ events = new EventSource('/api/events')
+ events.onopen = () => { connected.value = true; void loadEmails() }
+ events.onerror = () => { connected.value = false }
+ events.addEventListener('new_email', (event: MessageEvent<string>) => {
+  try { const email = JSON.parse(event.data) as Email
+   emails.value = emails.value.filter(item => item.id !== email.id)
+   if (matches(email)) { emails.value.push(email); emails.value.sort((a, b) => b.date - a.date || b.id - a.id) }
+  } catch { error.value = '邮件更新失败，请重新加载列表' }
+ })
+ events.addEventListener('flag_updated', (event: MessageEvent<string>) => {
+  try {
+   const update = JSON.parse(event.data) as Partial<Email> & { id: number; deleted?: boolean }
+   const existing = emails.value.find(email => email.id === update.id)
+   if (update.deleted) { emails.value = emails.value.filter(email => email.id !== update.id); if (selected.value?.id === update.id) selected.value = null; return }
+   if (existing) { Object.assign(existing, update); if (!matches(existing)) emails.value = emails.value.filter(email => email.id !== update.id) }
+   if (selected.value?.id === update.id) Object.assign(selected.value, update)
+  } catch { error.value = '邮件状态更新失败，请重新加载列表' }
+ })
+ events.addEventListener('sync_status', (event: MessageEvent<string>) => {
+  try { const update = JSON.parse(event.data) as { account_id: number; status: string; last_error: string }; const account = accounts.value.find(a => a.id === update.account_id); if (account) { account.status = update.status; account.last_error = update.last_error } } catch { error.value = '同步状态更新失败' }
+ })
+}
+onMounted(async () => { try { await loadAccounts(); await loadEmails(); startEvents() } catch (err) { error.value = errorMessage(err) } })
+onBeforeUnmount(() => { clearTimeout(searchTimer); activeRequest?.abort(); events?.close() })
 </script>
 <template>
  <div class="workspace">
@@ -63,7 +94,7 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); activeRequest?.abort() })
    <div class="account-heading"><p class="eyebrow">CONNECTED ACCOUNTS</p><button class="icon-button" aria-label="添加邮箱" @click="settings = true">＋</button></div>
    <button class="account-link" :class="{ active: accountId === 0 }" @click="accountId = 0; filter()"><span class="account-dot all-dot"></span>所有邮箱</button>
    <button v-for="(account, index) in accounts" :key="account.id" class="account-link" :class="{ active: accountId === account.id }" @click="accountId = account.id; filter()"><span class="account-dot" :style="{ background: ['#397867', '#c89349', '#6579aa', '#ad6b89'][index % 4] }"></span><span class="truncate">{{ account.display_name || account.email }}</span><span v-if="account.status === 'error'" title="连接失败">!</span><span v-else-if="account.status === 'paused'" title="已暂停">Ⅱ</span></button>
-   <div class="sidebar-footer"><button @click="settings = true">⚙ 邮箱与连接</button><button @click="emit('logout')">退出登录</button><small>你的邮件，留在你的邮箱。</small></div>
+   <div class="sidebar-footer"><small role="status">{{ connected ? '● 实时更新已连接' : '○ 正在连接实时更新' }}</small><button @click="settings = true">⚙ 邮箱与连接</button><button @click="emit('logout')">退出登录</button><small>你的邮件，留在你的邮箱。</small></div>
   </aside>
   <button v-if="sidebarOpen" class="sidebar-shade" aria-label="关闭导航" @click="sidebarOpen = false"></button>
   <section class="mail-workspace">

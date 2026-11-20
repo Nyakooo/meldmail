@@ -14,6 +14,7 @@ import (
 
 func (s *Server) accountRoutes(mux *http.ServeMux) {
 	for pattern, handler := range map[string]http.HandlerFunc{
+		"GET /api/events":   s.events,
 		"GET /api/emails":   s.listEmails,
 		"GET /api/accounts": s.accounts, "GET /api/accounts/{id}": s.account,
 		"POST /api/accounts": s.saveAccount, "PUT /api/accounts": s.saveAccount, "PUT /api/accounts/{id}": s.saveAccount,
@@ -116,6 +117,7 @@ func (s *Server) saveAccount(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "account could not be saved; email must be unique", 409)
 		return
 	}
+	s.mail.AccountsChanged()
 	if r.Method == http.MethodPost {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(201)
@@ -132,6 +134,7 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 		storageError(w, err)
 		return
 	}
+	s.mail.AccountsChanged()
 	w.WriteHeader(204)
 }
 func (s *Server) testAccount(w http.ResponseWriter, r *http.Request) {
@@ -212,5 +215,6 @@ func (s *Server) putProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid proxy URL or settings unavailable", 400)
 		return
 	}
+	s.mail.AccountsChanged()
 	s.getProxy(w, r)
 }

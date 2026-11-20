@@ -1,0 +1,108 @@
+package mail
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/nyakooo/meldmail/internal/mail/imapclient"
+	"github.com/nyakooo/meldmail/internal/mail/syncer"
+	"github.com/nyakooo/meldmail/internal/storage"
+)
+
+func (s *Service) AccountsChanged() {
+	if s.Workers != nil {
+		s.Workers.Changed()
+	}
+}
+func (s *Service) NewWorkers(options syncer.Options) *syncer.Manager {
+	return syncer.NewManager(syncer.Backend{Accounts: s.workerAccounts, Sync: s.Sync, Watch: s.watchAccount, Reconcile: s.reconcileAccount, Status: s.workerStatus}, options)
+}
+func (s *Service) workerAccounts(ctx context.Context) ([]syncer.Account, error) {
+	accounts, err := s.Store.Accounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	proxy, err := s.GlobalProxy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]syncer.Account, 0, len(accounts))
+	for _, a := range accounts {
+		// Only connection settings participate, so sync status/timestamps cannot restart workers.
+		config := struct {
+			Email, Provider, AuthType, IMAPHost, IMAPTLS, ProxyMode, Global string
+			IMAPPort                                                        int
+			Credentials, Proxy                                              []byte
+		}{a.Email, a.Provider, a.AuthType, a.IMAPHost, a.IMAPTLS, a.ProxyMode, proxy, a.IMAPPort, a.CredentialsEnc, a.ProxyURLEnc}
+		encoded, err := json.Marshal(config)
+		if err != nil {
+			return nil, fmt.Errorf("worker configuration: %w", err)
+		}
+		digest := sha256.Sum256(encoded)
+		result = append(result, syncer.Account{ID: a.ID, Revision: hex.EncodeToString(digest[:]), Paused: a.Status == "paused"})
+	}
+	return result, nil
+}
+func (s *Service) watchAccount(ctx context.Context, id int64, notify func()) error {
+	a, err := s.Store.Account(ctx, id)
+	if err != nil {
+		return err
+	}
+	credentials, err := s.Credentials(a)
+	if err != nil {
+		return err
+	}
+	d, err := s.Dialer(ctx, a)
+	if err != nil {
+		return err
+	}
+	return imapclient.Watch(ctx, a, credentials, d, s.TLSConfig, notify)
+}
+func (s *Service) reconcileAccount(ctx context.Context, id int64) (result error) {
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	release, err := s.Limiter.Acquire(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
+	a, err := s.Store.Account(ctx, id)
+	if err != nil {
+		return err
+	}
+	credentials, err := s.Credentials(a)
+	if err != nil {
+		return err
+	}
+	d, err := s.Dialer(ctx, a)
+	if err != nil {
+		return err
+	}
+	c, err := imapclient.Open(ctx, a, credentials, d, s.TLSConfig)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := c.Close(); err != nil {
+			result = errors.Join(result, err)
+		}
+	}()
+	return c.Reconcile(ctx, s.Store, a, func(flags storage.EmailFlags) error { return s.Events.Publish("flag_updated", flags) })
+}
+func (s *Service) workerStatus(ctx context.Context, id int64, mode string, cause error) error {
+	status := "active"
+	diagnostic := ""
+	if cause != nil {
+		status = "error"
+		diagnostic = diagnose(cause)
+	}
+	if err := s.Store.SetAccountStatus(ctx, id, status, diagnostic); err != nil {
+		return err
+	}
+	return s.Events.Publish("sync_status", map[string]interface{}{"account_id": id, "status": status, "mode": mode, "last_error": diagnostic})
+}

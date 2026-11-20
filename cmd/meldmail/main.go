@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"github.com/nyakooo/meldmail/internal/api"
 	"github.com/nyakooo/meldmail/internal/config"
 	"github.com/nyakooo/meldmail/internal/mail"
+	"github.com/nyakooo/meldmail/internal/mail/syncer"
 	"github.com/nyakooo/meldmail/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -53,25 +55,53 @@ func run() (result error) {
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Addr: c.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+
+	runCtx, cancelRun := context.WithCancel(ctx)
+	mailService.Workers = mailService.NewWorkers(syncer.DefaultOptions())
+	workerDone := make(chan error, 1)
+	go func() { workerDone <- mailService.Workers.Run(runCtx) }()
+	workerExited := false
+	defer func() {
+		cancelRun()
+		if !workerExited {
+			if err := <-workerDone; err != nil {
+				result = errors.Join(result, err)
+			}
+		}
+	}()
+	server := &http.Server{Addr: c.Addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384, BaseContext: func(net.Listener) context.Context { return runCtx }}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
+	serverExited := false
 	select {
 	case err := <-done:
+		serverExited = true
 		if !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("http listen: %w", err)
+			result = fmt.Errorf("http listen: %w", err)
 		}
+	case err := <-workerDone:
+		workerExited = true
+		if err == nil {
+			err = fmt.Errorf("unexpected worker exit")
+		}
+		result = fmt.Errorf("background workers stopped: %w", err)
 	case <-ctx.Done():
+	}
+	cancelRun()
+	if !serverExited {
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdown); err != nil {
-			return fmt.Errorf("http shutdown: %w", err)
+			result = errors.Join(result, fmt.Errorf("http shutdown: %w", err))
+			if err := server.Close(); err != nil {
+				result = errors.Join(result, fmt.Errorf("http close: %w", err))
+			}
 		}
 		if err := <-done; !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("http server: %w", err)
+			result = errors.Join(result, fmt.Errorf("http server: %w", err))
 		}
 	}
-	return nil
+	return result
 }
 func main() {
 	if err := run(); err != nil {

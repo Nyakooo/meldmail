@@ -43,7 +43,7 @@ Set `MELDMAIL_MASTER_KEY` to a random 32-byte key encoded as 64 hexadecimal char
 
 For Docker, copy `.env.example` to `.env`, set a strong password and master key, then run `docker compose up --build -d`. The service binds to `127.0.0.1:8080`, stores SQLite metadata under `./data`, and runs with a 256MB / 0.5 CPU limit. Do not commit `.env` or `data`. Only trust proxy headers when access is restricted to your reverse proxy.
 
-Implementation currently covers M0–M2, including the responsive unified inbox and search. Background workers and MCP are implemented in later milestones.
+Implementation currently covers M0–M3, including the responsive unified inbox, search and background real-time sync. Complete mail reading/sending and MCP are implemented in later milestones.
 
 After starting the M0 Compose container, run `python3 scripts/check-container.py` to verify the embedded Vue entry, WAL database, idle RSS below 30MiB, loopback binding and resource limits. The script uses Python standard-library modules and the Docker CLI.
 
@@ -63,3 +63,16 @@ An account's `proxy_mode` can be `global`, `direct`, `http`, `https`, or `socks5
 ## Inbox and search (M2)
 
 The web inbox combines connected accounts in descending date order, with account, unread and folder filters. Search matches subject, sender and the bounded snippet. Queries with at least three characters use SQLite FTS5 trigram; shorter queries use a parameterized substring search. `GET /api/emails` accepts `account_id`, `folder` (default `inbox`, or `all`), `unread`, `q`, `limit` (1–100, default 50) and an opaque `cursor`. The JSON response contains `emails` and `next_cursor`. Pagination uses `(date,id)` rather than offsets so equal timestamps remain stable.
+
+## Background updates (M3)
+
+Enabled accounts synchronize without a browser. Each account has a dedicated INBOX IDLE connection; metadata fetches and state checks use separate short connections and share a global three-account limit. QQ renews IDLE every 12 minutes. Flags/deletions are checked every 45 minutes. Reconnection delays are 5, 15, 30 and 60 seconds; five consecutive failures switch to three-minute polling. Editing, pausing or removing an account restarts or stops its worker.
+
+The authenticated `/api/events` stream broadcasts `new_email`, `flag_updated` and `sync_status`. The web UI inserts events directly; reconnecting refreshes the current snapshot to catch missed events. Slow subscribers are disconnected rather than allowed to accumulate an unbounded queue. Server shutdown cancels HTTP streams and joins the workers before closing SQLite.
+
+Optional real-browser SSE acceptance uses an installed Chrome and Playwright without adding browser dependencies to the application:
+
+```sh
+npm install --prefix /tmp/meldmail-browser playwright
+MELDMAIL_PLAYWRIGHT_MODULE=/tmp/meldmail-browser/node_modules/playwright go test ./internal/api -run TestLiveInboxBrowser -v
+```

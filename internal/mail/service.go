@@ -20,6 +20,7 @@ import (
 	"github.com/nyakooo/meldmail/internal/mail/smtpclient"
 	"github.com/nyakooo/meldmail/internal/mail/syncer"
 	"github.com/nyakooo/meldmail/internal/proxy"
+	"github.com/nyakooo/meldmail/internal/sse"
 	"github.com/nyakooo/meldmail/internal/storage"
 )
 
@@ -28,6 +29,8 @@ type Service struct {
 	Cipher    *secret.Cipher
 	Limiter   *syncer.Limiter
 	TLSConfig *tls.Config
+	Events    *sse.Broker
+	Workers   *syncer.Manager
 }
 
 func New(store *storage.Store, key []byte) (*Service, error) {
@@ -35,7 +38,7 @@ func New(store *storage.Store, key []byte) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{Store: store, Cipher: cipher, Limiter: syncer.NewLimiter()}, nil
+	return &Service{Store: store, Cipher: cipher, Limiter: syncer.NewLimiter(), Events: sse.New()}, nil
 }
 
 type AccountInput struct {
@@ -246,7 +249,7 @@ func (s *Service) Sync(ctx context.Context, id int64) (count int, result error) 
 			result = errors.Join(result, err)
 		}
 	}()
-	return client.Sync(ctx, s.Store, a)
+	return client.Sync(ctx, s.Store, a, func(e storage.Email) error { return s.Events.Publish("new_email", e) })
 }
 
 type Diagnostic struct {

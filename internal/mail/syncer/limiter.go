@@ -2,7 +2,6 @@ package syncer
 
 import (
 	"context"
-	"fmt"
 	"sync"
 )
 
@@ -26,7 +25,7 @@ func (l *Limiter) Acquire(ctx context.Context, id int64) (func(), error) {
 	if l.active[id] {
 		l.mu.Unlock()
 		<-l.slots
-		return nil, fmt.Errorf("sync: account is already synchronizing")
+		return nil, ErrBusy
 	}
 	l.active[id] = true
 	l.mu.Unlock()

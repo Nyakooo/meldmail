@@ -25,6 +25,9 @@ type Client struct {
 }
 
 func Open(ctx context.Context, a storage.Account, credentials auth.Credentials, d Dialer, tlsConfig *tls.Config) (result *Client, err error) {
+	return open(ctx, a, credentials, d, tlsConfig, nil)
+}
+func open(ctx context.Context, a storage.Account, credentials auth.Credentials, d Dialer, tlsConfig *tls.Config, handler *upstream.UnilateralDataHandler) (result *Client, err error) {
 	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(a.IMAPHost, strconv.Itoa(a.IMAPPort)))
 	if err != nil {
 		return nil, fmt.Errorf("imap dial: %w", err)
@@ -48,7 +51,7 @@ func Open(ctx context.Context, a storage.Account, credentials auth.Credentials, 
 		cfg = tlsConfig.Clone()
 		cfg.ServerName = a.IMAPHost
 	}
-	options := &upstream.Options{TLSConfig: cfg}
+	options := &upstream.Options{TLSConfig: cfg, UnilateralDataHandler: handler}
 	var client *upstream.Client
 	switch a.IMAPTLS {
 	case "implicit":
