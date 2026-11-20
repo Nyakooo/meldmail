@@ -43,7 +43,7 @@ Set `MELDMAIL_MASTER_KEY` to a random 32-byte key encoded as 64 hexadecimal char
 
 For Docker, copy `.env.example` to `.env`, set a strong password and master key, then run `docker compose up --build -d`. The service binds to `127.0.0.1:8080`, stores SQLite metadata under `./data`, and runs with a 256MB / 0.5 CPU limit. Do not commit `.env` or `data`. Only trust proxy headers when access is restricted to your reverse proxy.
 
-Implementation currently covers M0–M3, including the responsive unified inbox, search and background real-time sync. Complete mail reading/sending and MCP are implemented in later milestones.
+Implementation currently covers M0–M4: responsive inbox, search, background sync, on-demand reading, streaming downloads and SMTP compose/reply/forward. MCP and final release validation remain in later milestones.
 
 After starting the M0 Compose container, run `python3 scripts/check-container.py` to verify the embedded Vue entry, WAL database, idle RSS below 30MiB, loopback binding and resource limits. The script uses Python standard-library modules and the Docker CLI.
 
@@ -76,3 +76,27 @@ Optional real-browser SSE acceptance uses an installed Chrome and Playwright wit
 npm install --prefix /tmp/meldmail-browser playwright
 MELDMAIL_PLAYWRIGHT_MODULE=/tmp/meldmail-browser/node_modules/playwright go test ./internal/api -run TestLiveInboxBrowser -v
 ```
+
+## Reading and sending (M4)
+
+Opening a message fetches its BODYSTRUCTURE and selected text/html (preferred) or text/plain part through an independent short-lived IMAP connection. Decoded and sanitized bodies are bounded to 5MiB, and bluemonday removes active content. HTML is rendered in a sandboxed frame; remote tracking images are blocked. Message bodies, MIME and attachments are never saved by the service.
+
+Attachments are fetched by the exact PartID advertised in BODYSTRUCTURE, transfer-decoded and streamed to the HTTP response with `io.Copy`. Forwarded attachments also stream from IMAP into SMTP without a disk cache or full buffering. The forward action automatically includes the source text and attachments; its `text` field is an optional introductory note. Replies set threading headers and default to the original sender when `to` is omitted. Outgoing messages use the sending account's SMTP settings and proxy.
+
+- `GET /api/emails/:id` returns metadata, sanitized `html` or `text`, and `attachments`.
+- `GET /api/emails/:id/attachments/:part_id` returns a streamed attachment download.
+- `POST /api/emails/send` accepts `account_id`, `to` (address array), optional `cc`, `subject`, `text` or `html`, `action` (`send`, `reply`, `forward`), and `email_id` for replies/forwards.
+- `PATCH /api/emails/:id/flags` accepts `is_read`, `is_starred`, `archive`, or `delete`. A 202 response means the local change is applied and remote synchronization is queued.
+
+Pending flag changes are bounded to 128 metadata-only records in SQLite settings and survive restarts. Reconciliation cannot overwrite them. Failed operations retry with bounded backoff and restore the previous local state after five failures. Archive moves preserve the destination UID; delete moves to Trash rather than expunging unrelated messages. Gmail archive removes the `\Inbox` label using the Gmail IMAP extension and resolves the message in the advertised All Mail folder.
+
+M4 acceptance commands:
+
+```sh
+go test ./internal/mail -run 'TestReadSanitizeAndDecodeAttachment|TestStreaming20MiBAttachment' -v
+go test ./internal/mail/adapter -run TestGmailArchiveRemovesInboxLabel -v
+go test ./internal/storage -run TestDurableOptimisticFlagAction -v
+MELDMAIL_PLAYWRIGHT_MODULE=/tmp/meldmail-browser/node_modules/playwright go test ./internal/api -run TestMailActionsBrowser -v
+```
+
+The 20MiB RSS acceptance runs without race instrumentation; functional protocol tests also run in the race suite. Browser acceptance uses only local in-memory IMAP/SMTP fixtures and never sends mail to an external recipient.

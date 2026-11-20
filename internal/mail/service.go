@@ -25,12 +25,15 @@ import (
 )
 
 type Service struct {
-	Store     *storage.Store
-	Cipher    *secret.Cipher
-	Limiter   *syncer.Limiter
-	TLSConfig *tls.Config
-	Events    *sse.Broker
-	Workers   *syncer.Manager
+	Store       *storage.Store
+	Cipher      *secret.Cipher
+	Limiter     *syncer.Limiter
+	TLSConfig   *tls.Config
+	Events      *sse.Broker
+	Workers     *syncer.Manager
+	interactive chan struct{}
+	bodyMemory  chan struct{}
+	flagWake    chan struct{}
 }
 
 func New(store *storage.Store, key []byte) (*Service, error) {
@@ -38,7 +41,7 @@ func New(store *storage.Store, key []byte) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{Store: store, Cipher: cipher, Limiter: syncer.NewLimiter(), Events: sse.New()}, nil
+	return &Service{Store: store, Cipher: cipher, Limiter: syncer.NewLimiter(), Events: sse.New(), interactive: make(chan struct{}, 3), bodyMemory: make(chan struct{}, 1), flagWake: make(chan struct{}, 1)}, nil
 }
 
 type AccountInput struct {

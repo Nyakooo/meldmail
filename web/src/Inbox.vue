@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import AccountPanel from './AccountPanel.vue'
-import type { Account, Email, EmailPage } from './types'
+import MessageReader from './MessageReader.vue'
+import Composer from './Composer.vue'
+import type { Account, Email, EmailPage, EmailUpdate, ComposeAction } from './types'
 import { request, errorMessage } from './http'
 const emit = defineEmits<{ logout: [] }>()
 const accounts = ref<Account[]>([])
@@ -17,13 +19,15 @@ const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')
 const sidebarOpen = ref(false)
+const composing = ref<{ action: ComposeAction; original?: Email } | null>(null)
+const notice = ref('')
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 const connected = ref(false)
 let events: EventSource | undefined
 let sequence = 0
 let activeRequest: AbortController | undefined
 const accountName = (id: number) => { const a = accounts.value.find(a => a.id === id); return a?.display_name || a?.email || '邮箱' }
-const heading = computed(() => folder.value === 'inbox' ? '统一收件箱' : '全部邮件')
+const heading = computed(() => ({ inbox: '统一收件箱', all: '全部邮件', archive: '已归档', trash: '废纸篓' }[folder.value] || '邮件'))
 function date(value: number) { return new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric' }).format(new Date(value * 1000)) }
 function fullDate(value: number) { return new Date(value * 1000).toLocaleString('zh-CN') }
 async function loadAccounts() { accounts.value = await request<Account[]>('/api/accounts') }
@@ -59,6 +63,13 @@ function matches(email: Email): boolean {
  const text = query.value.trim().toLowerCase()
  return !text || [email.subject, email.from_name, email.from_addr, email.snippet].some(value => value.toLowerCase().includes(text))
 }
+function applyFlags(update: EmailUpdate) {
+ if (update.deleted || update.archived && folder.value === 'inbox') { emails.value = emails.value.filter(email => email.id !== update.id); if (selected.value?.id === update.id) selected.value = null; return }
+ const existing = emails.value.find(email => email.id === update.id)
+ if (existing) { Object.assign(existing, update); if (!matches(existing)) emails.value = emails.value.filter(email => email.id !== update.id) }
+ if (selected.value?.id === update.id) Object.assign(selected.value, update)
+}
+function compose(action: ComposeAction = 'send') { composing.value = { action, original: action === 'send' ? undefined : selected.value || undefined } }
 function startEvents() {
  events = new EventSource('/api/events')
  events.onopen = () => { connected.value = true; void loadEmails() }
@@ -70,13 +81,7 @@ function startEvents() {
   } catch { error.value = '邮件更新失败，请重新加载列表' }
  })
  events.addEventListener('flag_updated', (event: MessageEvent<string>) => {
-  try {
-   const update = JSON.parse(event.data) as Partial<Email> & { id: number; deleted?: boolean }
-   const existing = emails.value.find(email => email.id === update.id)
-   if (update.deleted) { emails.value = emails.value.filter(email => email.id !== update.id); if (selected.value?.id === update.id) selected.value = null; return }
-   if (existing) { Object.assign(existing, update); if (!matches(existing)) emails.value = emails.value.filter(email => email.id !== update.id) }
-   if (selected.value?.id === update.id) Object.assign(selected.value, update)
-  } catch { error.value = '邮件状态更新失败，请重新加载列表' }
+  try { applyFlags(JSON.parse(event.data) as EmailUpdate) } catch { error.value = '邮件状态更新失败，请重新加载列表' }
  })
  events.addEventListener('sync_status', (event: MessageEvent<string>) => {
   try { const update = JSON.parse(event.data) as { account_id: number; status: string; last_error: string }; const account = accounts.value.find(a => a.id === update.account_id); if (account) { account.status = update.status; account.last_error = update.last_error } } catch { error.value = '同步状态更新失败' }
@@ -89,8 +94,9 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); activeRequest?.abort(); event
  <div class="workspace">
   <aside class="sidebar" :class="{ open: sidebarOpen }">
    <a class="brand" href="/" aria-label="MeldMail 首页"><span class="brand-icon">M</span>MeldMail</a>
+   <button class="primary compose-button" :disabled="!accounts.length" @click="compose()">＋ 撰写邮件</button>
    <p class="eyebrow sidebar-caption">MAILBOX</p>
-   <nav aria-label="邮件文件夹"><button :class="{ active: folder === 'inbox' && !unread }" @click="folder = 'inbox'; unread = false; filter()"><span>▤</span>统一收件箱</button><button :class="{ active: unread }" @click="unread = !unread; filter()"><span>◉</span>未读邮件</button><button :class="{ active: folder === 'all' && !unread }" @click="folder = 'all'; unread = false; filter()"><span>▦</span>全部邮件</button></nav>
+   <nav aria-label="邮件文件夹"><button :class="{ active: folder === 'inbox' && !unread }" @click="folder = 'inbox'; unread = false; filter()"><span>▤</span>统一收件箱</button><button :class="{ active: unread }" @click="unread = !unread; filter()"><span>◉</span>未读邮件</button><button :class="{ active: folder === 'all' && !unread }" @click="folder = 'all'; unread = false; filter()"><span>▦</span>全部邮件</button><button :class="{ active: folder === 'archive' }" @click="folder = 'archive'; unread = false; filter()"><span>▣</span>已归档</button><button :class="{ active: folder === 'trash' }" @click="folder = 'trash'; unread = false; filter()"><span>♲</span>废纸篓</button></nav>
    <div class="account-heading"><p class="eyebrow">CONNECTED ACCOUNTS</p><button class="icon-button" aria-label="添加邮箱" @click="settings = true">＋</button></div>
    <button class="account-link" :class="{ active: accountId === 0 }" @click="accountId = 0; filter()"><span class="account-dot all-dot"></span>所有邮箱</button>
    <button v-for="(account, index) in accounts" :key="account.id" class="account-link" :class="{ active: accountId === account.id }" @click="accountId = account.id; filter()"><span class="account-dot" :style="{ background: ['#397867', '#c89349', '#6579aa', '#ad6b89'][index % 4] }"></span><span class="truncate">{{ account.display_name || account.email }}</span><span v-if="account.status === 'error'" title="连接失败">!</span><span v-else-if="account.status === 'paused'" title="已暂停">Ⅱ</span></button>
@@ -99,6 +105,7 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); activeRequest?.abort(); event
   <button v-if="sidebarOpen" class="sidebar-shade" aria-label="关闭导航" @click="sidebarOpen = false"></button>
   <section class="mail-workspace">
    <header class="workspace-toolbar"><button class="mobile-menu icon-button" aria-label="打开导航" @click="sidebarOpen = !sidebarOpen">☰</button><label class="search-box"><span aria-hidden="true">⌕</span><input v-model="query" type="search" maxlength="256" placeholder="搜索主题、发件人或验证码" aria-label="搜索邮件" @input="search"></label><button class="secondary sync-button" :disabled="syncing || !accounts.length" @click="sync">{{ syncing ? '同步中…' : '↻ 同步' }}</button></header>
+   <p v-if="notice" class="workspace-notice notice" role="status">{{ notice }}</p>
    <div v-if="error" class="workspace-error error" role="alert">{{ error }} <button class="text-button" @click="loadEmails()">重试</button></div>
    <div class="mail-columns" :class="{ 'has-selection': selected }">
     <section class="message-list" aria-label="邮件列表">
@@ -110,11 +117,13 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); activeRequest?.abort(); event
      <button v-if="cursor" class="load-more secondary" :disabled="loading" @click="loadEmails(true)">{{ loading ? '加载中…' : '加载更多' }}</button>
     </section>
     <section class="reader" aria-label="邮件预览">
-     <template v-if="selected"><header class="reader-toolbar"><button class="text-button" @click="selected = null">← 返回列表</button><span>{{ accountName(selected.account_id) }}</span></header><article class="message-preview"><span class="eyebrow">邮件预览</span><h2>{{ selected.subject || '（无主题）' }}</h2><div class="sender-detail"><div class="sender-avatar">{{ (selected.from_name || selected.from_addr || '?').slice(0, 1).toUpperCase() }}</div><div><strong>{{ selected.from_name || selected.from_addr }}</strong><p>{{ selected.from_addr }}</p><time>{{ fullDate(selected.date) }}</time></div></div><p class="preview-snippet">{{ selected.snippet }}</p></article></template>
+     <MessageReader v-if="selected" :email="selected" :account-name="accountName(selected.account_id)" @back="selected = null" @flags="applyFlags" @compose="compose" />
      <div v-else class="reader-empty"><div class="reader-art" aria-hidden="true"><span>✉</span><i></i></div><p class="eyebrow">A LITTLE MORE FOCUS</p><h2>给每一封来信，留一点空间。</h2><p>选择一封邮件，开始阅读。</p></div>
     </section>
    </div>
   </section>
+  <button class="mobile-compose primary" aria-label="撰写邮件" :disabled="!accounts.length" @click="compose()">＋</button>
+  <Composer v-if="composing" :accounts="accounts" :action="composing.action" :original="composing.original" @close="composing = null" @sent="notice = '邮件已发送'" />
   <AccountPanel v-if="settings" :accounts="accounts" @close="settings = false" @changed="accountsChanged" />
  </div>
 </template>

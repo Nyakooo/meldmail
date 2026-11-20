@@ -95,10 +95,11 @@ func (s *Store) SaveMetadata(ctx context.Context, f Folder, e Email) (result Ema
 	e.AccountID = f.AccountID
 	e.FolderID = f.ID
 	e.CreatedAt = time.Now().Unix()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO emails(account_id,folder_id,uid,message_id,in_reply_to,subject,from_name,from_addr,to_addrs,cc_addrs,snippet,has_attachments,is_read,is_starred,date,created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM folders WHERE id=? AND account_id=? AND uid_validity=?) ON CONFLICT(account_id,folder_id,uid) DO UPDATE SET is_read=excluded.is_read,is_starred=excluded.is_starred`, e.AccountID, e.FolderID, e.UID, e.MessageID, e.InReplyTo, e.Subject, e.FromName, e.FromAddr, e.ToAddrs, e.CCAddrs, e.Snippet, e.HasAttachments, e.IsRead, e.IsStarred, e.Date, e.CreatedAt, f.ID, f.AccountID, f.UIDValidity); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO emails(account_id,folder_id,uid,message_id,in_reply_to,subject,from_name,from_addr,to_addrs,cc_addrs,snippet,has_attachments,is_read,is_starred,date,created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM folders WHERE id=? AND account_id=? AND uid_validity=?) ON CONFLICT(account_id,folder_id,uid) DO UPDATE SET is_read=CASE WHEN EXISTS(SELECT 1 FROM settings WHERE key='flag_action:'||emails.id) THEN emails.is_read ELSE excluded.is_read END,is_starred=CASE WHEN EXISTS(SELECT 1 FROM settings WHERE key='flag_action:'||emails.id) THEN emails.is_starred ELSE excluded.is_starred END`, e.AccountID, e.FolderID, e.UID, e.MessageID, e.InReplyTo, e.Subject, e.FromName, e.FromAddr, e.ToAddrs, e.CCAddrs, e.Snippet, e.HasAttachments, e.IsRead, e.IsStarred, e.Date, e.CreatedAt, f.ID, f.AccountID, f.UIDValidity); err != nil {
 		return Email{}, fmt.Errorf("storage save metadata: %w", err)
 	}
-	if err = tx.QueryRowContext(ctx, "SELECT id FROM emails WHERE account_id=? AND folder_id=? AND uid=?", f.AccountID, f.ID, e.UID).Scan(&e.ID); err != nil {
+	e, err = scanEmail(tx.QueryRowContext(ctx, "SELECT "+emailColumns+" FROM emails e WHERE account_id=? AND folder_id=? AND uid=?", f.AccountID, f.ID, e.UID))
+	if err != nil {
 		return Email{}, fmt.Errorf("storage saved metadata: %w", err)
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE folders SET unread_count=(SELECT COUNT(*) FROM emails WHERE folder_id=? AND is_read=0) WHERE id=? AND uid_validity=?", f.ID, f.ID, f.UIDValidity); err != nil {

@@ -9,3 +9,7 @@ export interface Email {
 }
 export interface EmailPage { emails: Email[]; next_cursor: string }
 export interface Diagnostic { stage: string; ok: boolean; message: string }
+export interface Attachment { part_id: string; filename: string; content_type: string; size: number }
+export interface EmailContent extends Email { html: string; text: string; attachments: Attachment[] }
+export interface EmailUpdate extends Partial<Email> { id: number; deleted?: boolean; archived?: boolean; pending?: boolean }
+export type ComposeAction = 'send' | 'reply' | 'forward'

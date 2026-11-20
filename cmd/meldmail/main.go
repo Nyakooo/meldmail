@@ -59,7 +59,7 @@ func run() (result error) {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	mailService.Workers = mailService.NewWorkers(syncer.DefaultOptions())
 	workerDone := make(chan error, 1)
-	go func() { workerDone <- mailService.Workers.Run(runCtx) }()
+	go func() { workerDone <- mailService.RunBackground(runCtx) }()
 	workerExited := false
 	defer func() {
 		cancelRun()

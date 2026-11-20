@@ -14,9 +14,13 @@ import (
 
 func (s *Server) accountRoutes(mux *http.ServeMux) {
 	for pattern, handler := range map[string]http.HandlerFunc{
-		"GET /api/events":   s.events,
-		"GET /api/emails":   s.listEmails,
-		"GET /api/accounts": s.accounts, "GET /api/accounts/{id}": s.account,
+		"GET /api/emails/{id}":                       s.readEmail,
+		"GET /api/emails/{id}/attachments/{part_id}": s.downloadAttachment,
+		"PATCH /api/emails/{id}/flags":               s.changeFlags,
+		"POST /api/emails/send":                      s.sendEmail,
+		"GET /api/events":                            s.events,
+		"GET /api/emails":                            s.listEmails,
+		"GET /api/accounts":                          s.accounts, "GET /api/accounts/{id}": s.account,
 		"POST /api/accounts": s.saveAccount, "PUT /api/accounts": s.saveAccount, "PUT /api/accounts/{id}": s.saveAccount,
 		"DELETE /api/accounts": s.deleteAccount, "DELETE /api/accounts/{id}": s.deleteAccount,
 		"POST /api/accounts/test": s.testAccount, "POST /api/accounts/{id}/sync": s.syncAccount,

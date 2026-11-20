@@ -43,7 +43,7 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 	if q.Limit < 1 || q.Limit > 100 || q.AccountID < 0 || utf8.RuneCountInString(q.Q) > 256 || len(q.Cursor) > 256 {
 		return page, ErrInvalidQuery
 	}
-	clauses := []string{"1=1"}
+	clauses := []string{`NOT EXISTS (SELECT 1 FROM settings pending WHERE pending.key='flag_action:'||e.id AND json_extract(pending.value,'$.change.delete')=1)`}
 	args := make([]interface{}, 0)
 	if q.AccountID > 0 {
 		clauses = append(clauses, "e.account_id=?")
@@ -51,6 +51,12 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 	}
 	if q.Folder == "" {
 		q.Folder = "inbox"
+	}
+	if q.Folder == "all" {
+		clauses = append(clauses, "f.role<>'trash'")
+	}
+	if q.Folder == "inbox" {
+		clauses = append(clauses, `NOT EXISTS (SELECT 1 FROM settings pending WHERE pending.key='flag_action:'||e.id AND json_extract(pending.value,'$.change.archive')=1)`)
 	}
 	if q.Folder != "all" {
 		clauses = append(clauses, "(f.role=? OR f.name=?)")

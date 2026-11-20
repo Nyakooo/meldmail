@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.6
+	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/wneessen/go-mail v0.6.2
 	golang.org/x/crypto v0.36.0
 	golang.org/x/net v0.37.0
@@ -11,10 +12,12 @@ require (
 )
 
 require (
+	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emersion/go-message v0.18.1 // indirect
 	github.com/emersion/go-sasl v0.0.0-20231106173351-e73c9f7bad43 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/gorilla/css v1.0.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
