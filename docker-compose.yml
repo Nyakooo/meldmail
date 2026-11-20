@@ -8,11 +8,16 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - ./data:/data
-    env_file:
-      - .env
     environment:
+      - MELDMAIL_ADDR=:8080
+      - MELDMAIL_DB_PATH=/data/meldmail.db
+      - MELDMAIL_MASTER_KEY=${MELDMAIL_MASTER_KEY:?set MELDMAIL_MASTER_KEY}
+      - MELDMAIL_ADMIN_PASSWORD=${MELDMAIL_ADMIN_PASSWORD:-}
+      - MELDMAIL_TRUST_PROXY=true
       - GOMEMLIMIT=200MiB
       - GOGC=50
+    mem_limit: 256m
+    cpus: 0.5
     deploy:
       resources:
         limits:

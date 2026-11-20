@@ -9,7 +9,7 @@ data/
 
 # Go 构建产物与测试缓存
 bin/
-meldmail
+/meldmail
 *.exe
 *.test
 *.out
@@ -28,3 +28,4 @@ yarn-error.log*
 .idea/
 .DS_Store
 Thumbs.db
+internal/api/dist/

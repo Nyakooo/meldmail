@@ -18,7 +18,7 @@ MeldMail is in the planning and early implementation stage. Features, commands, 
 
 ## Documentation
 
-- [Development specification](docs/DEVELOPMENT.md)
+- [Development specification](SPEC.md)
 - [License](LICENSE)
 
 ## License
@@ -26,3 +26,21 @@ MeldMail is in the planning and early implementation stage. Features, commands, 
 MeldMail is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
 
 Third-party dependencies retain their own licenses. See the dependency notices shipped with each release.
+
+## M0 local development
+
+Requires Go 1.24+, Node.js 20.19+ and npm. Build the embedded web assets before compiling Go:
+
+```sh
+npm ci --prefix web
+npm run build --prefix web
+go test ./...
+go vet ./...
+go run ./cmd/meldmail
+```
+
+Set `MELDMAIL_MASTER_KEY` to a random 32-byte key encoded as 64 hexadecimal characters (`openssl rand -hex 32`). Set `MELDMAIL_ADMIN_PASSWORD` on first startup; only its bcrypt hash is stored, and subsequent starts do not overwrite it. Passwords must fit bcrypt's 72-byte limit. Keep the master key securely backed up. Sessions expire after 24 hours and are revoked on restart.
+
+For Docker, copy `.env.example` to `.env`, set a strong password and master key, then run `docker compose up --build -d`. The service binds to `127.0.0.1:8080`, stores SQLite metadata under `./data`, and runs with a 256MB / 0.5 CPU limit. Do not commit `.env` or `data`. Only trust proxy headers when access is restricted to your reverse proxy.
+
+Implementation currently covers M0. Later milestone features are not available yet.

@@ -7,12 +7,12 @@ COPY web/ ./
 RUN npm run build
 
 # Stage 2: 构建单二进制 Go 后端（内嵌前端产物）
-FROM golang:1.22-alpine AS go-builder
+FROM golang:1.24-alpine AS go-builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-COPY --from=web-builder /src/web/dist ./internal/api/dist
+COPY --from=web-builder /src/internal/api/dist ./internal/api/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/meldmail ./cmd/meldmail
 
 # Stage 3: 极简运行镜像
