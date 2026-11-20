@@ -43,7 +43,7 @@ Set `MELDMAIL_MASTER_KEY` to a random 32-byte key encoded as 64 hexadecimal char
 
 For Docker, copy `.env.example` to `.env`, set a strong password and master key, then run `docker compose up --build -d`. The service binds to `127.0.0.1:8080`, stores SQLite metadata under `./data`, and runs with a 256MB / 0.5 CPU limit. Do not commit `.env` or `data`. Only trust proxy headers when access is restricted to your reverse proxy.
 
-Implementation currently covers M0 and M1. Inbox UI, background workers and MCP are implemented in later milestones.
+Implementation currently covers M0–M2, including the responsive unified inbox and search. Background workers and MCP are implemented in later milestones.
 
 After starting the M0 Compose container, run `python3 scripts/check-container.py` to verify the embedded Vue entry, WAL database, idle RSS below 30MiB, loopback binding and resource limits. The script uses Python standard-library modules and the Docker CLI.
 
@@ -59,3 +59,7 @@ Authenticate with `POST /api/auth/login` (`{"password":"..."}`), retaining the s
 - `GET/PUT /api/settings/proxy` inspects or sets the global proxy (`{"url":"http://user:password@host:port"}`). GET removes user credentials from the response. An empty URL disables the global proxy.
 
 An account's `proxy_mode` can be `global`, `direct`, `http`, `https`, or `socks5`. Explicit proxy modes use `proxy_url`. Both proxy URLs and account credentials are encrypted with the master key before storage. Only bounded snippets and metadata are stored; no message bodies or attachments are persisted.
+
+## Inbox and search (M2)
+
+The web inbox combines connected accounts in descending date order, with account, unread and folder filters. Search matches subject, sender and the bounded snippet. Queries with at least three characters use SQLite FTS5 trigram; shorter queries use a parameterized substring search. `GET /api/emails` accepts `account_id`, `folder` (default `inbox`, or `all`), `unread`, `q`, `limit` (1–100, default 50) and an opaque `cursor`. The JSON response contains `emails` and `next_cursor`. Pagination uses `(date,id)` rather than offsets so equal timestamps remain stable.

@@ -14,6 +14,7 @@ import (
 
 func (s *Server) accountRoutes(mux *http.ServeMux) {
 	for pattern, handler := range map[string]http.HandlerFunc{
+		"GET /api/emails":   s.listEmails,
 		"GET /api/accounts": s.accounts, "GET /api/accounts/{id}": s.account,
 		"POST /api/accounts": s.saveAccount, "PUT /api/accounts": s.saveAccount, "PUT /api/accounts/{id}": s.saveAccount,
 		"DELETE /api/accounts": s.deleteAccount, "DELETE /api/accounts/{id}": s.deleteAccount,
@@ -145,6 +146,14 @@ func (s *Server) testAccount(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			storageError(w, err)
 			return
+		}
+		if input.Email != "" {
+			existing := a
+			a, err = s.mail.Prepare(r.Context(), input, &existing)
+			if err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
 		}
 	} else {
 		var err error
