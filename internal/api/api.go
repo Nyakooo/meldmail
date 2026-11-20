@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nyakooo/meldmail/internal/mail"
 	"github.com/nyakooo/meldmail/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -28,6 +29,7 @@ type attempt struct {
 	until time.Time
 }
 type Server struct {
+	mail     *mail.Service
 	store    *storage.Store
 	trust    bool
 	mu       sync.Mutex
@@ -35,12 +37,12 @@ type Server struct {
 	attempts map[string]attempt
 }
 
-func New(store *storage.Store, trust bool) (http.Handler, error) {
+func New(store *storage.Store, trust bool, mailService *mail.Service) (http.Handler, error) {
 	root, err := fs.Sub(assets, "dist")
 	if err != nil {
 		return nil, fmt.Errorf("api assets: %w", err)
 	}
-	s := &Server{store: store, trust: trust, sessions: make(map[[32]byte]time.Time), attempts: make(map[string]attempt)}
+	s := &Server{mail: mailService, store: store, trust: trust, sessions: make(map[[32]byte]time.Time), attempts: make(map[string]attempt)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.HandleFunc("POST /api/auth/logout", s.logout)
@@ -51,6 +53,7 @@ func New(store *storage.Store, trust bool) (http.Handler, error) {
 		}
 		writeJSON(w, map[string]bool{"authenticated": true})
 	})
+	s.accountRoutes(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	mux.Handle("/", http.FileServer(http.FS(root)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

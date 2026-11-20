@@ -28,7 +28,7 @@ func TestLoginSession(t *testing.T) {
 	if err := s.InitPassword(context.Background(), string(hash)); err != nil {
 		t.Fatal(err)
 	}
-	h, err := New(s, true)
+	h, err := New(s, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

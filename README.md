@@ -43,6 +43,19 @@ Set `MELDMAIL_MASTER_KEY` to a random 32-byte key encoded as 64 hexadecimal char
 
 For Docker, copy `.env.example` to `.env`, set a strong password and master key, then run `docker compose up --build -d`. The service binds to `127.0.0.1:8080`, stores SQLite metadata under `./data`, and runs with a 256MB / 0.5 CPU limit. Do not commit `.env` or `data`. Only trust proxy headers when access is restricted to your reverse proxy.
 
-Implementation currently covers M0. Later milestone features are not available yet.
+Implementation currently covers M0 and M1. Inbox UI, background workers and MCP are implemented in later milestones.
 
 After starting the M0 Compose container, run `python3 scripts/check-container.py` to verify the embedded Vue entry, WAL database, idle RSS below 30MiB, loopback binding and resource limits. The script uses Python standard-library modules and the Docker CLI.
+
+## Account and proxy API (M1)
+
+Authenticate with `POST /api/auth/login` (`{"password":"..."}`), retaining the session cookie. Account endpoints require this cookie. `POST /api/accounts` accepts `email`, `provider`, and `password`; provider presets include `gmail`, `163`, `126`, `qq`, and `outlook`. For `custom`, also provide `imap_host`, `imap_port`, `imap_tls`, `smtp_host`, `smtp_port`, and `smtp_tls`. TLS modes are `implicit` and `starttls`; certificate verification is always enabled in production. OAuth2 authentication accepts an existing `access_token`; automatic provider token refresh remains an extension hook.
+
+- `GET /api/accounts` lists accounts without credentials.
+- `PUT /api/accounts/:id` replaces configuration; omit the password to retain current credentials.
+- `DELETE /api/accounts/:id` removes the account and its local metadata.
+- `POST /api/accounts/test` accepts a saved `id` or an unsaved account configuration. It returns separate proxy, IMAP and SMTP diagnostics without sending mail.
+- `POST /api/accounts/:id/sync` manually synchronizes the latest 100 messages initially, then new UIDs only.
+- `GET/PUT /api/settings/proxy` inspects or sets the global proxy (`{"url":"http://user:password@host:port"}`). GET removes user credentials from the response. An empty URL disables the global proxy.
+
+An account's `proxy_mode` can be `global`, `direct`, `http`, `https`, or `socks5`. Explicit proxy modes use `proxy_url`. Both proxy URLs and account credentials are encrypted with the master key before storage. Only bounded snippets and metadata are stored; no message bodies or attachments are persisted.

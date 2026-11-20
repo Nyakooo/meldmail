@@ -13,6 +13,7 @@ import (
 
 	"github.com/nyakooo/meldmail/internal/api"
 	"github.com/nyakooo/meldmail/internal/config"
+	"github.com/nyakooo/meldmail/internal/mail"
 	"github.com/nyakooo/meldmail/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -44,7 +45,11 @@ func run() (result error) {
 	} else if _, err := store.Setting(ctx, "admin_password"); err != nil {
 		return fmt.Errorf("configure MELDMAIL_ADMIN_PASSWORD for first startup: %w", err)
 	}
-	handler, err := api.New(store, c.TrustProxy)
+	mailService, err := mail.New(store, c.MasterKey)
+	if err != nil {
+		return err
+	}
+	handler, err := api.New(store, c.TrustProxy, mailService)
 	if err != nil {
 		return err
 	}
