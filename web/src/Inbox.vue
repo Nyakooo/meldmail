@@ -3,7 +3,9 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import AccountPanel from './AccountPanel.vue'
 import MessageReader from './MessageReader.vue'
 import Composer from './Composer.vue'
-import type { Account, Email, EmailPage, EmailUpdate, ComposeAction } from './types'
+import MCPPanel from './MCPPanel.vue'
+import ApprovalReview from './ApprovalReview.vue'
+import type { Account, Email, EmailPage, EmailUpdate, ComposeAction, Approval } from './types'
 import { request, errorMessage } from './http'
 const emit = defineEmits<{ logout: [] }>()
 const accounts = ref<Account[]>([])
@@ -21,6 +23,10 @@ const error = ref('')
 const sidebarOpen = ref(false)
 const composing = ref<{ action: ComposeAction; original?: Email } | null>(null)
 const notice = ref('')
+const mcpOpen = ref(false)
+const reviewId = ref<string | null>(null)
+const mcpRevision = ref(0)
+const pendingApprovals = ref(0)
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 const connected = ref(false)
 let events: EventSource | undefined
@@ -79,9 +85,10 @@ function applyFlags(update: EmailUpdate) {
  if (selected.value?.id === update.id) Object.assign(selected.value, update)
 }
 function compose(action: ComposeAction = 'send') { composing.value = { action, original: action === 'send' ? undefined : selected.value || undefined } }
+async function refreshMCP() { try { const actions = await request<Approval[]>('/api/mcp/approvals'); pendingApprovals.value = actions.filter(action => action.status === 'pending').length; mcpRevision.value++ } catch (err) { error.value = errorMessage(err) } }
 function startEvents() {
  events = new EventSource('/api/events')
- events.onopen = () => { connected.value = true; void loadEmails() }
+ events.onopen = () => { connected.value = true; void loadEmails(); void refreshMCP() }
  events.onerror = () => { connected.value = false }
  events.addEventListener('new_email', (event: MessageEvent<string>) => {
   try { const email = JSON.parse(event.data) as Email
@@ -92,6 +99,9 @@ function startEvents() {
  })
  events.addEventListener('flag_updated', (event: MessageEvent<string>) => {
   try { applyFlags(JSON.parse(event.data) as EmailUpdate) } catch { error.value = '邮件状态更新失败，请重新加载列表' }
+ })
+ events.addEventListener('mcp_approval_required', (event: MessageEvent<string>) => {
+  try { const update = JSON.parse(event.data) as { action_id: string; status: string }; void refreshMCP(); if (update.status === 'pending' && !reviewId.value) reviewId.value = update.action_id } catch { error.value = '审批通知读取失败' }
  })
  events.addEventListener('sync_status', (event: MessageEvent<string>) => {
   try { const update = JSON.parse(event.data) as { account_id: number; status: string; last_error: string }; const account = accounts.value.find(a => a.id === update.account_id); if (account) { account.status = update.status; account.last_error = update.last_error } } catch { error.value = '同步状态更新失败' }
@@ -110,7 +120,7 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); activeRequest?.abort(); event
    <div class="account-heading"><p class="eyebrow">CONNECTED ACCOUNTS</p><button class="icon-button" aria-label="添加邮箱" @click="settings = true">＋</button></div>
    <button class="account-link" :class="{ active: accountId === 0 }" @click="accountId = 0; filter()"><span class="account-dot all-dot"></span>所有邮箱</button>
    <button v-for="(account, index) in accounts" :key="account.id" class="account-link" :class="{ active: accountId === account.id }" @click="accountId = account.id; filter()"><span class="account-dot" :style="{ background: ['#397867', '#c89349', '#6579aa', '#ad6b89'][index % 4] }"></span><span class="truncate">{{ account.display_name || account.email }}</span><span v-if="account.status === 'error'" title="连接失败">!</span><span v-else-if="account.status === 'paused'" title="已暂停">Ⅱ</span></button>
-   <div class="sidebar-footer"><small role="status">{{ connected ? '● 实时更新已连接' : '○ 正在连接实时更新' }}</small><button @click="settings = true">⚙ 邮箱与连接</button><button @click="emit('logout')">退出登录</button><small>你的邮件，留在你的邮箱。</small></div>
+   <div class="sidebar-footer"><small role="status">{{ connected ? '● 实时更新已连接' : '○ 正在连接实时更新' }}</small><button @click="settings = true">⚙ 邮箱与连接</button><button @click="mcpOpen = true; sidebarOpen = false">◇ AI 与 MCP <span v-if="pendingApprovals" class="approval-badge">{{ pendingApprovals }}</span></button><button @click="emit('logout')">退出登录</button><small>你的邮件，留在你的邮箱。</small></div>
   </aside>
   <button v-if="sidebarOpen" class="sidebar-shade" aria-label="关闭导航" @click="sidebarOpen = false"></button>
   <section class="mail-workspace">
@@ -134,6 +144,8 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); activeRequest?.abort(); event
   </section>
   <button class="mobile-compose primary" aria-label="撰写邮件" :disabled="!accounts.length" @click="compose()">＋</button>
   <Composer v-if="composing" :accounts="accounts" :action="composing.action" :original="composing.original" @close="composing = null" @sent="notice = '邮件已发送'" />
+  <MCPPanel v-if="mcpOpen" :revision="mcpRevision" @close="mcpOpen = false" @review="reviewId = $event" @changed="refreshMCP" />
+  <ApprovalReview v-if="reviewId" :key="reviewId" :id="reviewId" @close="reviewId = null" @changed="refreshMCP" />
   <AccountPanel v-if="settings" :accounts="accounts" @close="settings = false" @changed="accountsChanged" />
  </div>
 </template>

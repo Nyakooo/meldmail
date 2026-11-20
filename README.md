@@ -43,7 +43,7 @@ Set `MELDMAIL_MASTER_KEY` to a random 32-byte key encoded as 64 hexadecimal char
 
 For Docker, copy `.env.example` to `.env`, set a strong password and master key, then run `docker compose up --build -d`. The service binds to `127.0.0.1:8080`, stores SQLite metadata under `./data`, and runs with a 256MB / 0.5 CPU limit. Do not commit `.env` or `data`. Only trust proxy headers when access is restricted to your reverse proxy.
 
-Implementation currently covers M0–M4: responsive inbox, search, background sync, on-demand reading, streaming downloads and SMTP compose/reply/forward. MCP and final release validation remain in later milestones.
+Implementation currently covers M0–M5, including the responsive mail client and controlled MCP access. Final resource/deployment validation is completed in M6.
 
 After starting the M0 Compose container, run `python3 scripts/check-container.py` to verify the embedded Vue entry, WAL database, idle RSS below 30MiB, loopback binding and resource limits. The script uses Python standard-library modules and the Docker CLI.
 
@@ -100,3 +100,37 @@ MELDMAIL_PLAYWRIGHT_MODULE=/tmp/meldmail-browser/node_modules/playwright go test
 ```
 
 The 20MiB RSS acceptance runs without race instrumentation; functional protocol tests also run in the race suite. Browser acceptance uses only local in-memory IMAP/SMTP fixtures and never sends mail to an external recipient.
+
+## MCP access and approvals (M5)
+
+Open **AI 与 MCP** in the web sidebar to create an access token. Tokens default to read-only, and write tokens default to requiring approval for sends. The raw token is displayed only once; the server stores its SHA-256 hash. Revocation disables the token immediately and rejects its unapproved requests while preserving audit history.
+
+Configure your MCP client with the Streamable HTTP endpoint `https://your-mail-host/mcp` and header `Authorization: Bearer <your-token>`. The transport is stateless and returns JSON responses. It negotiates MCP versions `2025-03-26`, `2025-06-18`, and `2025-11-25`; standalone GET streams and session DELETE return 405. Clients must advertise `Accept: application/json, text/event-stream` and send JSON. Requests have an 8MiB envelope limit and bounded read/write deadlines. The official Go MCP SDK is used as an external interoperability client in acceptance tests; production request handling uses bounded JSON decoding.
+
+| Permission | Tools |
+| --- | --- |
+| readonly or readwrite | `list_accounts`, `list_emails`, `search_emails`, `get_email` |
+| readwrite | `mark_email_read`, `archive_email` |
+| readwrite, optionally requiring approval | `send_email`, `reply_email`, `forward_email` |
+
+`tools/list` publishes each tool's input schema. Mail IDs use `email_id`; send tools use `account_id`, an address-array `to`, optional `cc`, `subject`, `text` or `html`. Replies and forwards also require `email_id`. Read-only tokens receive HTTP 403 for write tools. Email contents remain untrusted input rather than instructions to the consuming agent.
+
+For approval-enabled tokens, send tools return JSON text content containing `{"status":"pending_approval","action_id":"..."}`. The web application receives an SSE notification and opens a review dialog showing sender, recipients, subject and body. Forward/reply requests can also preview the original mail. **批准并发送** claims the action once and performs SMTP; duplicate approval requests cannot send it twice. Rejection never sends. An uncertain SMTP outcome is recorded for manual checking, never automatically retried.
+
+Approval content is kept only in memory: at most 32 actions and 16MiB total payload. SQLite `pending_actions.payload_json` contains metadata and a body digest, never the body. The approval deadline is 15 minutes; expired requests are rejected on review/access. After restart, pending requests fail because their body was deliberately not persisted; interrupted approved requests are marked as an uncertain outcome requiring an outbox check. Approval history and audit summaries omit bodies and raw tokens.
+
+Admin endpoints require the web session cookie:
+
+- `GET/POST /api/mcp/tokens`, `DELETE /api/mcp/tokens/:id`.
+- `GET /api/mcp/approvals` returns body-free status metadata; `GET /api/mcp/approvals/:id` returns one review payload.
+- `POST /api/mcp/approvals/:id/approve` or `/reject` decides a pending action.
+- `GET /api/mcp/audit` returns the latest 100 redacted audit entries.
+
+M5 acceptance commands:
+
+```sh
+go test ./internal/mcp -v
+MELDMAIL_PLAYWRIGHT_MODULE=/tmp/meldmail-browser/node_modules/playwright go test ./internal/api -run TestMCPApprovalBrowser -v
+```
+
+These tests discover and call all nine tools through the official SDK, verify permission boundaries and concurrency, and exercise real browser approval/rejection against local SMTP fixtures.

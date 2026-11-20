@@ -13,3 +13,6 @@ export interface Attachment { part_id: string; filename: string; content_type: s
 export interface EmailContent extends Email { html: string; text: string; attachments: Attachment[] }
 export interface EmailUpdate extends Partial<Email> { id: number; deleted?: boolean; archived?: boolean; pending?: boolean }
 export type ComposeAction = 'send' | 'reply' | 'forward'
+export interface MCPToken { id: number; name: string; scope: 'readonly' | 'readwrite'; require_approval: boolean; enabled: boolean; last_used_at: number; created_at: number }
+export interface Approval { id: string; token_id: number; token_name: string; account_id: number; action_type: string; status: string; error_msg: string; created_at: number; expires_at: number; sender_email: string; body_available: boolean; payload: { account_id: number; email_id?: number; action: string; to: string[]; cc?: string[]; subject: string; text?: string; html?: string } }
+export interface AuditEntry { id: number; token_id: number | null; tool_name: string; args_summary: string; status: string; created_at: number }
