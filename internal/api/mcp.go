@@ -78,6 +78,10 @@ func (s *Server) approvals(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 	if err := s.mcp.Approve(r.Context(), r.PathValue("id")); err != nil {
+		if errors.Is(err, mcp.ErrAuditOutcome) {
+			writeJSON(w, map[string]interface{}{"status": "executed", "audit_warning": true})
+			return
+		}
 		mcpError(w, err)
 		return
 	}

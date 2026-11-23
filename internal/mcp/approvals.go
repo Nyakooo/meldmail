@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -49,7 +50,7 @@ func (s *Server) expireLocked(ctx context.Context) error {
 		if changed {
 			action, err := s.store.PendingAction(ctx, id)
 			if err != nil {
-				return err
+				return fmt.Errorf("mcp load pending action: %w", err)
 			}
 			if err := s.store.Audit(ctx, &action.TokenID, "approval_expired", id, "error"); err != nil {
 				return err
@@ -72,7 +73,7 @@ func (s *Server) enqueue(ctx context.Context, token storage.MCPToken, input mail
 	}
 	account, err := s.store.Account(ctx, input.AccountID)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("mcp load approval sender: %w", err)
 	}
 	digest := sha256.Sum256([]byte(input.Text + "\x00" + input.HTML))
 	metadata := approvalMetadata{SenderEmail: account.Email, AccountID: input.AccountID, EmailID: input.EmailID, Action: input.Action, To: input.To, CC: input.CC, Subject: input.Subject, BodySHA256: hex.EncodeToString(digest[:])}
@@ -114,7 +115,7 @@ func (s *Server) Approvals(ctx context.Context) ([]ActionView, error) {
 	}
 	actions, err := s.store.PendingActions(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("mcp list approvals: %w", err)
 	}
 	views := make([]ActionView, 0, len(actions))
 	for _, action := range actions {
@@ -144,12 +145,12 @@ func (s *Server) Approve(ctx context.Context, id string) (resultErr error) {
 	action, err := s.store.PendingAction(ctx, id)
 	if err != nil {
 		s.mu.Unlock()
-		return err
+		return fmt.Errorf("mcp load approval: %w", err)
 	}
 	token, err := s.store.MCPToken(ctx, action.TokenID)
 	if err != nil {
 		s.mu.Unlock()
-		return err
+		return fmt.Errorf("mcp load approval token: %w", err)
 	}
 	if !token.Enabled || token.Scope != "readwrite" {
 		s.mu.Unlock()
@@ -158,7 +159,7 @@ func (s *Server) Approve(ctx context.Context, id string) (resultErr error) {
 	claimed, err := s.store.ClaimMCPAction(ctx, id)
 	if err != nil {
 		s.mu.Unlock()
-		return err
+		return fmt.Errorf("mcp claim approval: %w", err)
 	}
 	if !claimed {
 		s.mu.Unlock()
@@ -199,8 +200,12 @@ func (s *Server) Approve(ctx context.Context, id string) (resultErr error) {
 	if !changed {
 		return ErrConflict
 	}
-	if err := s.store.Audit(finish, &action.TokenID, input.Action+"_email", fmt.Sprintf(`{"action_id":%q}`, id), auditStatus); err != nil {
-		return err
+	auditErr := s.store.Audit(finish, &action.TokenID, input.Action+"_email", fmt.Sprintf(`{"action_id":%q}`, id), auditStatus)
+	if auditErr != nil {
+		if sendErr != nil {
+			return errors.Join(fmt.Errorf("mcp approved delivery: %w", sendErr), fmt.Errorf("mcp audit outcome: %w", auditErr))
+		}
+		return errors.Join(ErrAuditOutcome, fmt.Errorf("mcp audit outcome: %w", auditErr))
 	}
 	if err := s.publish(id, status); err != nil {
 		return err
@@ -231,7 +236,7 @@ func (s *Server) Reject(ctx context.Context, id string) error {
 	s.pendingBytes -= entry.size
 	delete(s.pending, id)
 	if err := s.store.Audit(ctx, &action.TokenID, "approval_rejected", id, "denied"); err != nil {
-		return err
+		return fmt.Errorf("mcp audit rejection: %w", err)
 	}
 	return s.publish(id, "rejected")
 }
@@ -239,7 +244,7 @@ func (s *Server) RevokeToken(ctx context.Context, id int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.store.RevokeMCPToken(ctx, id); err != nil {
-		return err
+		return fmt.Errorf("mcp revoke token: %w", err)
 	}
 	for actionID, entry := range s.pending {
 		if entry.executing {
@@ -258,7 +263,7 @@ func (s *Server) RevokeToken(ctx context.Context, id int64) error {
 		}
 	}
 	if err := s.store.Audit(ctx, &id, "token_revoked", "{}", "success"); err != nil {
-		return err
+		return fmt.Errorf("mcp audit revocation: %w", err)
 	}
 	return nil
 }

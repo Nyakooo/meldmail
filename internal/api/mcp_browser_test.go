@@ -1,12 +1,18 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
+	"io"
+	"mime/quotedprintable"
 	"net/http"
 	"net/http/httptest"
+	netmail "net/mail"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,8 +84,8 @@ const {chromium}=require(process.env.MELDMAIL_PLAYWRIGHT_MODULE);
   let id=1;
   const call=async(args)=>{const response=await page.request.post(base+'/mcp',{headers:{Authorization:'Bearer '+token,Accept:'application/json, text/event-stream','Content-Type':'application/json'},data:{jsonrpc:'2.0',id:id++,method:'tools/call',params:{name:'send_email',arguments:args}}});if(!response.ok())throw new Error('MCP call failed: '+response.status());const body=await response.json();return JSON.parse(body.result.content[0].text)};
   const accounts=await (await page.request.get(base+'/api/accounts')).json();const account_id=accounts[0].id;
-  const pending=await call({account_id,to:['recipient@example.com'],subject:'Approval from MCP',text:'Approve body from MCP'});if(pending.status!=='pending_approval')throw new Error('send not queued');
-  const review=page.locator('dialog.approval-review');await review.getByText('Approve body from MCP',{exact:true}).waitFor();if((await (await page.request.get(base+'/fixture/deliveries')).json()).count!==0)throw new Error('sent before approval');
+  const pending=await call({account_id,to:['recipient@example.com'],subject:'Approval from MCP',text:'Text not actually sent',html:'<p>Approve body from MCP</p>'});if(pending.status!=='pending_approval')throw new Error('send not queued');
+  const review=page.locator('dialog.approval-review');await review.getByText('<p>Approve body from MCP</p>',{exact:true}).waitFor();if((await (await page.request.get(base+'/fixture/deliveries')).json()).count!==0)throw new Error('sent before approval');
   await review.getByRole('button',{name:'批准并发送',exact:true}).click();await review.waitFor({state:'detached'});if((await (await page.request.get(base+'/fixture/deliveries')).json()).count!==1)throw new Error('approval did not send once');
   await call({account_id,to:['reject@example.com'],subject:'Reject fixture',html:'<script>window.hacked=true</script>'});await review.getByText('<script>window.hacked=true</script>',{exact:true}).waitFor();if(await review.locator('script').count())throw new Error('approval HTML executed');await review.getByRole('button',{name:'拒绝',exact:true}).click();await review.waitFor({state:'detached'});
   await page.setViewportSize({width:390,height:844});await page.getByLabel('打开导航',{exact:true}).click();await page.getByRole('button',{name:/AI 与 MCP/}).click();await page.getByRole('button',{name:'审计日志',exact:true}).click();await page.getByText('approval_rejected',{exact:true}).waitFor();
@@ -104,5 +110,23 @@ const {chromium}=require(process.env.MELDMAIL_PLAYWRIGHT_MODULE);
 	t.Log(string(output))
 	if len(deliveries) != 1 {
 		t.Fatal("expected exactly one approved SMTP delivery")
+	}
+	message, err := netmail.ReadMessage(bytes.NewReader(<-deliveries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body io.Reader = message.Body
+	switch message.Header.Get("Content-Transfer-Encoding") {
+	case "quoted-printable":
+		body = quotedprintable.NewReader(body)
+	case "base64":
+		body = base64.NewDecoder(base64.StdEncoding, body)
+	}
+	var decoded bytes.Buffer
+	if _, err := io.Copy(&decoded, body); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(message.Header.Get("Content-Type"), "text/html") || !strings.Contains(decoded.String(), "<p>Approve body from MCP</p>") || strings.Contains(decoded.String(), "Text not actually sent") {
+		t.Fatal("approval preview differed from actual SMTP body")
 	}
 }

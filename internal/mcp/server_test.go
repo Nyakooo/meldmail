@@ -242,6 +242,25 @@ eventLoop:
 	if err := service.ProcessFlagActions(ctx); err != nil {
 		t.Fatal(err)
 	}
+
+	if _, err := store.DB.ExecContext(ctx, `CREATE TRIGGER fail_success_audit BEFORE INSERT ON audit_logs WHEN new.status='success' AND new.tool_name='send_email' BEGIN SELECT RAISE(FAIL,'injected audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	acknowledged, err := writer.CallTool(ctx, &sdk.CallToolParams{Name: "send_email", Arguments: map[string]interface{}{"account_id": account.ID, "to": []string{"recipient@example.com"}, "text": "Acknowledged despite audit failure"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := toolOutput(t, acknowledged)
+	if sent["status"] != "sent" || sent["audit_warning"] == nil {
+		t.Fatal("audit failure hid completed delivery", sent)
+	}
+	<-deliveries
+	if len(deliveries) != 0 {
+		t.Fatal("audit failure duplicated delivery")
+	}
+	if _, err := store.DB.ExecContext(ctx, "DROP TRIGGER fail_success_audit"); err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range []string{"reply_email", "forward_email"} {
 		args := map[string]interface{}{"account_id": account.ID, "email_id": emailID, "text": "A note"}
 		if name == "forward_email" {

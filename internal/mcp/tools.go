@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -37,6 +38,12 @@ func tools() []tool {
 		reply[key] = value
 	}
 	reply["email_id"] = id
+	forward := map[string]interface{}{}
+	for key, value := range reply {
+		if key != "html" {
+			forward[key] = value
+		}
+	}
 	result := []tool{
 		{Name: "list_accounts", Description: "List connected mail accounts without credentials.", InputSchema: schema(map[string]interface{}{}), ReadOnly: true},
 		{Name: "list_emails", Description: "List cached email metadata and snippets with stable pagination.", InputSchema: schema(filter), ReadOnly: true},
@@ -46,7 +53,7 @@ func tools() []tool {
 		{Name: "archive_email", Description: "Archive an email; Gmail removes its Inbox label.", InputSchema: schema(map[string]interface{}{"email_id": id}, "email_id")},
 		{Name: "send_email", Description: "Compose mail. Approval-enabled tokens return pending_approval without sending.", InputSchema: schema(sends, "account_id", "to")},
 		{Name: "reply_email", Description: "Reply with threading headers; omitted to defaults to the original sender. May require approval.", InputSchema: schema(reply, "account_id", "email_id")},
-		{Name: "forward_email", Description: "Forward original body and streamed attachments, with an optional introductory text. May require approval.", InputSchema: schema(reply, "account_id", "email_id", "to")},
+		{Name: "forward_email", Description: "Forward original body and streamed attachments, with an optional introductory text. May require approval.", InputSchema: schema(forward, "account_id", "email_id", "to")},
 	}
 	for i := range result {
 		result[i].Annotations = map[string]bool{"readOnlyHint": result[i].ReadOnly, "destructiveHint": !result[i].ReadOnly, "idempotentHint": result[i].ReadOnly || result[i].Name == "mark_email_read", "openWorldHint": true}
@@ -138,6 +145,8 @@ func result(value interface{}) (map[string]interface{}, error) {
 func (s *Server) call(ctx context.Context, token storage.MCPToken, definition tool, raw json.RawMessage) (response map[string]interface{}, resultErr error) {
 	status := "success"
 	summary := "{}"
+	completed := false
+	var output interface{}
 	defer func() {
 		if resultErr != nil {
 			status = "error"
@@ -145,10 +154,19 @@ func (s *Server) call(ctx context.Context, token storage.MCPToken, definition to
 		finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if err := s.store.Audit(finish, &token.ID, definition.Name, summary, status); err != nil {
-			resultErr = fmt.Errorf("mcp record audit: %w", err)
+			wrapped := fmt.Errorf("mcp record audit: %w", err)
+			if resultErr != nil {
+				resultErr = errors.Join(resultErr, wrapped)
+			} else if completed {
+				if value, ok := output.(map[string]string); ok {
+					value["audit_warning"] = "Action accepted or completed; audit outcome recording failed. Do not repeat it automatically."
+				}
+				response, resultErr = result(output)
+			} else {
+				resultErr = wrapped
+			}
 		}
 	}()
-	var output interface{}
 	switch definition.Name {
 	case "list_accounts":
 		if err := decodeArguments(raw, definition, &struct{}{}); err != nil {
@@ -156,7 +174,7 @@ func (s *Server) call(ctx context.Context, token storage.MCPToken, definition to
 		}
 		accounts, err := s.store.Accounts(ctx)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("mcp list accounts: %w", err)
 		}
 		output = map[string]interface{}{"accounts": accounts}
 	case "list_emails", "search_emails":
@@ -176,7 +194,7 @@ func (s *Server) call(ctx context.Context, token storage.MCPToken, definition to
 		}
 		page, err := s.store.ListEmails(ctx, storage.EmailQuery{AccountID: input.AccountID, Folder: input.Folder, Unread: input.Unread, Q: input.Q, Cursor: input.Cursor, Limit: input.Limit})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("mcp list emails: %w", err)
 		}
 		output = page
 	case "get_email", "mark_email_read", "archive_email":
@@ -194,7 +212,7 @@ func (s *Server) call(ctx context.Context, token storage.MCPToken, definition to
 		if definition.Name == "get_email" {
 			content, err := s.mail.Read(ctx, input.EmailID)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("mcp read email: %w", err)
 			}
 			output = content
 		} else {
@@ -206,9 +224,13 @@ func (s *Server) call(ctx context.Context, token storage.MCPToken, definition to
 			if definition.Name == "archive_email" {
 				change = storage.FlagChange{Archive: true}
 			}
-			if _, err := s.mail.ChangeFlags(ctx, input.EmailID, change); err != nil {
-				return nil, err
+			if err := s.store.Audit(ctx, &token.ID, definition.Name, summary, "pending"); err != nil {
+				return nil, fmt.Errorf("mcp begin flag audit: %w", err)
 			}
+			if _, err := s.mail.ChangeFlags(ctx, input.EmailID, change); err != nil {
+				return nil, fmt.Errorf("mcp queue flags: %w", err)
+			}
+			completed = true
 			output = map[string]string{"status": "queued"}
 		}
 	case "send_email", "reply_email", "forward_email":
@@ -225,6 +247,12 @@ func (s *Server) call(ctx context.Context, token storage.MCPToken, definition to
 			return nil, err
 		}
 		input = normalized
+		if input.Action == "forward" && input.HTML != "" {
+			return nil, ErrInvalid
+		}
+		if input.Action != "forward" && input.HTML != "" {
+			input.Text = ""
+		}
 		for _, list := range [][]string{input.To, input.CC} {
 			for _, address := range list {
 				if len(address) > 320 {
@@ -233,12 +261,12 @@ func (s *Server) call(ctx context.Context, token storage.MCPToken, definition to
 			}
 		}
 		if _, err := s.store.Account(ctx, input.AccountID); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("mcp load sender: %w", err)
 		}
 		if input.Action != "send" {
 			original, err := s.store.Email(ctx, input.EmailID)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("mcp load source email: %w", err)
 			}
 			if original.AccountID != input.AccountID {
 				return nil, ErrInvalid
@@ -259,17 +287,22 @@ func (s *Server) call(ctx context.Context, token storage.MCPToken, definition to
 			}
 		}
 		summary = fmt.Sprintf(`{"account_id":%d,"email_id":%d,"recipient_count":%d}`, input.AccountID, input.EmailID, len(input.To)+len(input.CC))
+		if err := s.store.Audit(ctx, &token.ID, definition.Name, summary, "pending"); err != nil {
+			return nil, fmt.Errorf("mcp begin send audit: %w", err)
+		}
 		if token.RequireApproval {
 			id, err := s.enqueue(ctx, token, input)
 			if err != nil {
 				return nil, err
 			}
+			completed = true
 			status = "pending"
 			output = map[string]string{"status": "pending_approval", "action_id": id}
 		} else {
 			if err := s.mail.Send(ctx, input); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("mcp send mail: %w", err)
 			}
+			completed = true
 			output = map[string]string{"status": "sent"}
 		}
 	}

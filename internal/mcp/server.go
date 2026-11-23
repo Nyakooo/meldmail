@@ -24,6 +24,7 @@ import (
 	"github.com/nyakooo/meldmail/internal/storage"
 )
 
+var ErrAuditOutcome = errors.New("delivery completed but audit outcome unavailable")
 var ErrForbidden = errors.New("MCP permission denied")
 var ErrConflict = errors.New("MCP action is no longer pending")
 var ErrCapacity = errors.New("MCP approval capacity reached")
