@@ -20,6 +20,7 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=go-builder /out/meldmail /app/meldmail
+COPY LICENSE THIRD_PARTY_NOTICES.md /app/
 RUN mkdir -p /data
 
 EXPOSE 8080

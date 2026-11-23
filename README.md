@@ -14,7 +14,7 @@ MeldMail brings multiple IMAP email accounts into one clean, responsive web inte
 
 ## Project status
 
-MeldMail is in the planning and early implementation stage. Features, commands, configuration formats, and provider compatibility may change. Check the development specification and release notes before deploying.
+M0–M6 are implemented and locally accepted. Provider behavior is covered by local protocol fixtures; connecting a real mailbox requires its own IMAP/SMTP access and application password. OAuth token refresh remains an extension hook.
 
 ## Documentation
 
@@ -27,14 +27,14 @@ MeldMail is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
 
 Third-party dependencies retain their own licenses. See the dependency notices shipped with each release.
 
-## M0 local development
+## Local development
 
 Requires Go 1.24+, Node.js 20.19+ and npm. Build the embedded web assets before compiling Go:
 
 ```sh
 npm ci --prefix web
 npm run build --prefix web
-go test ./...
+go test -race ./...
 go vet ./...
 go run ./cmd/meldmail
 ```
@@ -43,7 +43,7 @@ Set `MELDMAIL_MASTER_KEY` to a random 32-byte key encoded as 64 hexadecimal char
 
 For Docker, copy `.env.example` to `.env`, set a strong password and master key, then run `docker compose up --build -d`. The service binds to `127.0.0.1:8080`, stores SQLite metadata under `./data`, and runs with a 256MB / 0.5 CPU limit. Do not commit `.env` or `data`. Only trust proxy headers when access is restricted to your reverse proxy.
 
-Implementation currently covers M0–M5, including the responsive mail client and controlled MCP access. Final resource/deployment validation is completed in M6.
+The responsive mail client, background synchronization and controlled MCP access are implemented. See [acceptance evidence](docs/ACCEPTANCE.md) for the final test scope and measured resource use.
 
 After starting the M0 Compose container, run `python3 scripts/check-container.py` to verify the embedded Vue entry, WAL database, idle RSS below 30MiB, loopback binding and resource limits. The script uses Python standard-library modules and the Docker CLI.
 
@@ -134,3 +134,102 @@ MELDMAIL_PLAYWRIGHT_MODULE=/tmp/meldmail-browser/node_modules/playwright go test
 ```
 
 These tests discover and call all nine tools through the official SDK, verify permission boundaries and concurrency, and exercise real browser approval/rejection against local SMTP fixtures.
+
+## Production deployment
+
+Copy `.env.example` to `.env` and fill in `MELDMAIL_MASTER_KEY` (generate with `openssl rand -hex 32`) and a strong `MELDMAIL_ADMIN_PASSWORD`. Restrict the file with `chmod 600 .env`. Then:
+
+```sh
+docker compose up --build -d
+docker compose logs --tail=50 meldmail
+```
+
+The deployment consists of one container. The host endpoint is `http://127.0.0.1:8080`; only the host reverse proxy should expose it. Compose sets both Docker's `mem_limit: 256m` / `cpus: 0.5` and deployment resource limits, with `GOMEMLIMIT=200MiB` and `GOGC=50`. SQLite uses WAL, a 16MiB page cache and in-memory temporary storage. The master key is required at every startup; changing it makes existing encrypted account credentials unreadable.
+
+### Host Nginx and Certbot
+
+Replace `mail.example.com` and certificate paths below. Obtain a certificate on the host (for example with `certbot --nginx -d mail.example.com` after configuring DNS and an HTTP server block). The certificate and Nginx stay on the host; the container listens only on HTTP.
+
+```nginx
+server {
+    listen 80;
+    server_name mail.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name mail.example.com;
+    ssl_certificate /etc/letsencrypt/live/mail.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mail.example.com/privkey.pem;
+
+    client_max_body_size 8m;
+
+    # SSE and MCP must pass through without buffering or caching.
+    location ~ ^/(api/events|mcp)$ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Keep request bodies and attachments streaming without temporary files.
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+Run `sudo nginx -t` before reloading Nginx. Compose enables `MELDMAIL_TRUST_PROXY=true`; restrict container access to the host proxy so clients cannot forge forwarded headers. HTTPS requests receive Secure session cookies. For direct HTTP development, the default trust-proxy setting is false. Certbot renews certificates independently of the app.
+
+### Upgrades and backups
+
+Keep the master key together with a protected metadata backup. Stop the service before copying `data/` so the database and any WAL files form a consistent snapshot, then restart it. Credentials, tokens, account settings, snippets and pending flag changes are in SQLite; message bodies and attachments remain in the source mailbox. Outstanding MCP approval bodies are intentionally lost on restart and must be resubmitted.
+
+```sh
+docker compose stop
+# Copy data/ and .env to your protected backup location.
+docker compose up --build -d
+```
+
+For a rollback, use the previous source revision/image together with its matching metadata backup. Never change or lose the master key during upgrades. The repository provides a source-build deployment; an image tag in Compose does not imply that a registry release has been published.
+
+## Final acceptance (M6)
+
+```sh
+npm ci --prefix web
+npm run build --prefix web
+go test -race ./...
+go vet ./...
+docker compose build
+python3 scripts/stress-container.py
+```
+
+`stress-container.py` requires Docker Compose 2.24.4+ (or newer), Python 3 and OpenSSL. It starts one isolated app container using the real Compose resource/runtime settings, a temporary metadata directory and an ephemeral loopback HTTP port. Local TLS IMAP fixtures run in the test process on the host; the container reaches them through `host-gateway`. No real mailbox is contacted. The script checks 10 background accounts and IDLE connections, a maximum of three simultaneous syncs, repeated REST/MCP 5MiB body reads, 24 independently paused slow readers (with verified overlap), and 20MiB streaming downloads while 15MiB of approval bodies remain in memory, RSS below 180MiB, absence of OOM/restarts, embedded frontend assets, metadata-only persistence and graceful shutdown with SSE open. Its temporary container and data are removed on exit; the regular `meldmail` deployment is untouched.
+
+Real-browser checks can also be included in the final race suite:
+
+```sh
+npm install --prefix /tmp/meldmail-browser playwright
+MELDMAIL_PLAYWRIGHT_MODULE=/tmp/meldmail-browser/node_modules/playwright go test -race ./...
+```
+
+They use `/usr/bin/google-chrome` by default (`MELDMAIL_CHROME` overrides it). Dependency notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); the official MCP SDK is a test-only dependency and is not linked into the production server.
+
+The accepted M6 run measured **98.28MiB peak process RSS**, three concurrent syncs and six simultaneously paused slow responses, with no OOM or container restart. Shutdown with SSE open took 0.44 seconds. Measurements describe the local fixture workload, not a guarantee for arbitrary mailbox servers or unlimited clients. Run `scripts/update-notices.py` after changing Go or Vue runtime dependencies.
