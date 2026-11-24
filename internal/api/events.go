@@ -8,6 +8,11 @@ import (
 )
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	changed, ok := s.authSession(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	ch, unsubscribe, err := s.mail.Events.Subscribe()
 	if err != nil {
 		http.Error(w, "too many event connections", 429)
@@ -35,6 +40,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-changed:
 			return
 		case event, ok := <-ch:
 			if !ok {

@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import AccountPanel from './AccountPanel.vue'
+import ChangePassword from './ChangePassword.vue'
 import MessageReader from './MessageReader.vue'
 import Composer from './Composer.vue'
 import MCPPanel from './MCPPanel.vue'
 import ApprovalReview from './ApprovalReview.vue'
 import type { Account, Email, EmailPage, EmailUpdate, ComposeAction, Approval } from './types'
 import { request, errorMessage } from './http'
-const emit = defineEmits<{ logout: [] }>()
+const emit = defineEmits<{ logout: []; passwordChanged: [] }>()
 const accounts = ref<Account[]>([])
 const emails = ref<Email[]>([])
 const accountId = ref(0)
@@ -17,6 +18,7 @@ const folder = ref('inbox')
 const cursor = ref('')
 const selected = ref<Email | null>(null)
 const settings = ref(false)
+const passwordOpen = ref(false)
 const loading = ref(false)
 const syncing = ref(false)
 const error = ref('')
@@ -120,7 +122,7 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); activeRequest?.abort(); event
    <div class="account-heading"><p class="eyebrow">CONNECTED ACCOUNTS</p><button class="icon-button" aria-label="添加邮箱" @click="settings = true">＋</button></div>
    <button class="account-link" :class="{ active: accountId === 0 }" @click="accountId = 0; filter()"><span class="account-dot all-dot"></span>所有邮箱</button>
    <button v-for="(account, index) in accounts" :key="account.id" class="account-link" :class="{ active: accountId === account.id }" @click="accountId = account.id; filter()"><span class="account-dot" :style="{ background: ['#397867', '#c89349', '#6579aa', '#ad6b89'][index % 4] }"></span><span class="truncate">{{ account.display_name || account.email }}</span><span v-if="account.status === 'error'" title="连接失败">!</span><span v-else-if="account.status === 'paused'" title="已暂停">Ⅱ</span></button>
-   <div class="sidebar-footer"><small role="status">{{ connected ? '● 实时更新已连接' : '○ 正在连接实时更新' }}</small><button @click="settings = true">⚙ 邮箱与连接</button><button @click="mcpOpen = true; sidebarOpen = false">◇ AI 与 MCP <span v-if="pendingApprovals" class="approval-badge">{{ pendingApprovals }}</span></button><button @click="emit('logout')">退出登录</button><small>你的邮件，留在你的邮箱。</small></div>
+   <div class="sidebar-footer"><small role="status">{{ connected ? '● 实时更新已连接' : '○ 正在连接实时更新' }}</small><button @click="settings = true">⚙ 邮箱与连接</button><button @click="mcpOpen = true; sidebarOpen = false">◇ AI 与 MCP <span v-if="pendingApprovals" class="approval-badge">{{ pendingApprovals }}</span></button><button @click="passwordOpen = true; sidebarOpen = false">修改登录密码</button><button @click="emit('logout')">退出登录</button><small>你的邮件，留在你的邮箱。</small></div>
   </aside>
   <button v-if="sidebarOpen" class="sidebar-shade" aria-label="关闭导航" @click="sidebarOpen = false"></button>
   <section class="mail-workspace">
@@ -146,6 +148,7 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); activeRequest?.abort(); event
   <Composer v-if="composing" :accounts="accounts" :action="composing.action" :original="composing.original" @close="composing = null" @sent="notice = '邮件已发送'" />
   <MCPPanel v-if="mcpOpen" :revision="mcpRevision" @close="mcpOpen = false" @review="reviewId = $event" @changed="refreshMCP" />
   <ApprovalReview v-if="reviewId" :key="reviewId" :id="reviewId" @close="reviewId = null" @changed="refreshMCP" />
+  <ChangePassword v-if="passwordOpen" @close="passwordOpen = false" @changed="emit('passwordChanged')" />
   <AccountPanel v-if="settings" :accounts="accounts" @close="settings = false" @changed="accountsChanged" />
  </div>
 </template>

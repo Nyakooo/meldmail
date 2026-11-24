@@ -247,3 +247,11 @@ go test ./internal/mail/imapclient -run 'TestSyncProviderIgnoresPartialLength|Te
 ```
 
 The account-form browser check uses isolated API fixtures and the same optional Playwright/Chrome installation described above; it never saves or contacts a real mailbox.
+
+## Changing the administrator login password
+
+Sign in with the current MeldMail administrator password, then choose **修改登录密码** in the sidebar. Enter the current password, new password and confirmation. Saving stores a bcrypt hash, signs out all web sessions (including existing SSE streams), and asks you to sign in with the new password. Mail accounts, encrypted credentials, metadata and MCP tokens are preserved. Passwords must be non-empty and fit bcrypt's 72-byte limit.
+
+`MELDMAIL_ADMIN_PASSWORD` in `.env` is used only to initialize an empty installation. Editing it, restarting Docker or recreating the container does not replace the existing database password. Likewise, `docker exec meldmail printenv MELDMAIL_ADMIN_PASSWORD` displays the container's startup value, not necessarily the current login password. After initialization, change the password through the web entry above. Keep the existing `MELDMAIL_MASTER_KEY`; it encrypts mailbox credentials and is unrelated to the login password.
+
+The authenticated endpoint is `POST /api/auth/password` with `current_password` and `new_password`. Wrong current passwords do not end the caller's session; repeated attempts are rate limited. Passwords and hashes are never returned in API responses or logged.

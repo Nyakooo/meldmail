@@ -31,13 +31,15 @@ type attempt struct {
 	until time.Time
 }
 type Server struct {
-	mcp      *mcp.Server
-	mail     *mail.Service
-	store    *storage.Store
-	trust    bool
-	mu       sync.Mutex
-	sessions map[[32]byte]time.Time
-	attempts map[string]attempt
+	mcp            *mcp.Server
+	mail           *mail.Service
+	store          *storage.Store
+	trust          bool
+	mu             sync.Mutex
+	authMu         sync.Mutex
+	sessionChanged chan struct{}
+	sessions       map[[32]byte]time.Time
+	attempts       map[string]attempt
 }
 
 func New(store *storage.Store, trust bool, mailService *mail.Service) (http.Handler, error) {
@@ -45,7 +47,7 @@ func New(store *storage.Store, trust bool, mailService *mail.Service) (http.Hand
 	if err != nil {
 		return nil, fmt.Errorf("api assets: %w", err)
 	}
-	s := &Server{mail: mailService, store: store, trust: trust, sessions: make(map[[32]byte]time.Time), attempts: make(map[string]attempt)}
+	s := &Server{mail: mailService, store: store, trust: trust, sessions: make(map[[32]byte]time.Time), attempts: make(map[string]attempt), sessionChanged: make(chan struct{})}
 	if mailService != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -58,6 +60,7 @@ func New(store *storage.Store, trust bool, mailService *mail.Service) (http.Hand
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.HandleFunc("POST /api/auth/logout", s.logout)
+	mux.HandleFunc("POST /api/auth/password", s.changePassword)
 	mux.HandleFunc("GET /api/auth/me", func(w http.ResponseWriter, r *http.Request) {
 		if !s.authenticated(r) {
 			http.Error(w, "unauthorized", 401)
@@ -103,9 +106,13 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	}
 }
 func (s *Server) authenticated(r *http.Request) bool {
+	_, ok := s.authSession(r)
+	return ok
+}
+func (s *Server) authSession(r *http.Request) (<-chan struct{}, bool) {
 	c, err := r.Cookie("meldmail_session")
 	if err != nil {
-		return false
+		return nil, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -113,9 +120,9 @@ func (s *Server) authenticated(r *http.Request) bool {
 	expiry, ok := s.sessions[key]
 	if !ok || time.Now().After(expiry) {
 		delete(s.sessions, key)
-		return false
+		return nil, false
 	}
-	return true
+	return s.sessionChanged, true
 }
 func (s *Server) cookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{Name: "meldmail_session", Value: value, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: r.TLS != nil || (s.trust && r.Header.Get("X-Forwarded-Proto") == "https"), MaxAge: maxAge})
@@ -156,6 +163,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", 400)
 		return
 	}
+	// Serialize verification and session issuance with password changes so an
+	// in-flight login cannot create a fresh session using the previous hash.
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
 	hash, err := s.store.Setting(r.Context(), "admin_password")
 	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "administrator password must be configured at startup", 503)

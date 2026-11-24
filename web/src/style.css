@@ -11,3 +11,5 @@
 .sidebar{overflow-y:auto}
 
 .connection-guide{background:#eef4e8;border:1px solid #d6e3cb;border-radius:9px;padding:16px;margin:0 0 20px;font-size:12px;line-height:1.8;overflow-wrap:anywhere}.connection-guide h4{font-size:14px;margin:0 0 8px;color:#285e49}.connection-guide p{margin:8px 0;color:#53694b}.connection-guide ol{padding-left:21px;margin:10px 0}.connection-guide li{padding:3px 0}.connection-guide a{color:#285e49;text-decoration:underline;text-underline-offset:3px}.connection-guide summary{cursor:pointer;font-weight:600;color:#356b52}.connection-guide details{border-top:1px solid #d6e3cb;padding-top:10px;margin-top:10px}.account-form .field-hint{font-size:12px;line-height:1.75;color:#687b5e;margin:-4px 0 17px;overflow-wrap:anywhere}
+
+.password-dialog{max-width:480px}.password-dialog>p{font-size:13px;color:#687b5e}.password-dialog .panel-heading h2{margin:0}
