@@ -36,3 +36,14 @@ Accepted locally on 2026-11-23 against `SPEC.md` and `AGENTS.md`. Each milestone
 Go 1.24.13, Vue 3/TypeScript/Vite, Docker Engine 29.10.0 and Compose 5.8.0 were used locally. See the README for setup and exact commands. Memory uses the non-race production process's Linux `VmHWM`, not the Go test process or a browser's RSS.
 
 Protocol and browser acceptance use generated local TLS IMAP/SMTP fixtures. No external recipient receives test mail. Real Gmail/Outlook/163/QQ accounts and host DNS/Certbot require the operator's credentials/domain; those live services were not claimed as verified. Password/application-password authentication is implemented; XOAUTH2 and refresh hooks are reserved as specified, not an automatic OAuth enrollment/refresh product.
+
+## 2026-11-24 requirement update: on-demand local bodies
+
+The user authorized sanitized body persistence after the original M0–M6 metadata-only design. `SPEC.md` and `AGENTS.md` now permit this one bounded reading-cache path; the earlier evidence above remains a historical record.
+
+- `go test -race ./...` and `go vet ./...`: PASS after the storage/read-path change. The authenticated API browser scenarios remain covered.
+- `npm run build --prefix web`: PASS. The UI layout is retained; a failed cache write can show a reading warning.
+- New tests prove: background sync leaves the body cache empty; first read stores sanitized content; a reopened store/service reads locally without a network attempt, even when network slots are busy; slow response consumption retains its memory slot; cache write/maintenance failures leave the body readable with a warning.
+- Storage tests cover the actual 100MiB byte budget, 1000-entry LRU budget, 5MiB body limit, migration of an existing database, policy/source mismatch, UID moves, UIDVALIDITY resets, account-source changes and cascading deletion.
+- Updated production-image stress: 10 accounts/IDLE connections, 15MiB pending approval bodies, 24 REST + 12 MCP body reads, 24 concurrent slow-reader requests (14 paused responses at peak) and twelve 20MiB streamed downloads. Ten sanitized bodies were present in SQLite and stayed within the 100MiB payload budget. Outgoing approval bodies, raw MIME and attachment bytes were not persisted. RSS peak **128.66MiB**, maximum sync concurrency 3, no OOM/restart, graceful SSE shutdown **1.60s**.
+- New migration `002_email_bodies.sql` preserves existing mailbox metadata and administrator settings. The 100MiB limit covers body-cache payloads; SQLite pages, indexes and WAL add filesystem overhead.

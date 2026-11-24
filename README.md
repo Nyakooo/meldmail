@@ -7,7 +7,7 @@ MeldMail brings multiple IMAP email accounts into one clean, responsive web inte
 **Core principles**
 - One unified inbox for multiple email accounts.
 - Background synchronization that continues when the browser is closed.
-- Metadata-first storage: message bodies and attachments stay in the source mailbox and are fetched on demand.
+- Metadata-first synchronization with on-demand local reading: opened, sanitized bodies are saved in SQLite; attachments remain streamed from the source mailbox.
 - Per-account Direct / HTTP(S) CONNECT / SOCKS5 proxy settings.
 - REST + SSE for the web application, and a standard MCP Server for external MCP-compatible clients and AI agents.
 - A single Go service and SQLite database; no Redis, message broker, or separate database server.
@@ -41,7 +41,7 @@ go run ./cmd/meldmail
 
 Set `MELDMAIL_MASTER_KEY` to a random 32-byte key encoded as 64 hexadecimal characters (`openssl rand -hex 32`). Set `MELDMAIL_ADMIN_PASSWORD` on first startup; only its bcrypt hash is stored, and subsequent starts do not overwrite it. Passwords must fit bcrypt's 72-byte limit. Keep the master key securely backed up. Sessions expire after 24 hours and are revoked on restart.
 
-For Docker, copy `.env.example` to `.env`, set a strong password and master key, then run `docker compose up --build -d`. The service binds to `127.0.0.1:8080`, stores SQLite metadata under `./data`, and runs with a 256MB / 0.5 CPU limit. Do not commit `.env` or `data`. Only trust proxy headers when access is restricted to your reverse proxy.
+For Docker, copy `.env.example` to `.env`, set a strong password and master key, then run `docker compose up --build -d`. The service binds to `127.0.0.1:8080`, stores SQLite metadata and opened-body caches under `./data`, and runs with a 256MB / 0.5 CPU limit. Do not commit `.env` or `data`. Only trust proxy headers when access is restricted to your reverse proxy.
 
 The responsive mail client, background synchronization and controlled MCP access are implemented. See [acceptance evidence](docs/ACCEPTANCE.md) for the final test scope and measured resource use.
 
@@ -58,7 +58,7 @@ Authenticate with `POST /api/auth/login` (`{"password":"..."}`), retaining the s
 - `POST /api/accounts/:id/sync` manually synchronizes the latest 100 messages initially, then new UIDs only.
 - `GET/PUT /api/settings/proxy` inspects or sets the global proxy (`{"url":"http://user:password@host:port"}`). GET removes user credentials from the response. An empty URL disables the global proxy.
 
-An account's `proxy_mode` can be `global`, `direct`, `http`, `https`, or `socks5`. Explicit proxy modes use `proxy_url`. Both proxy URLs and account credentials are encrypted with the master key before storage. Only bounded snippets and metadata are stored; no message bodies or attachments are persisted.
+An account's `proxy_mode` can be `global`, `direct`, `http`, `https`, or `socks5`. Explicit proxy modes use `proxy_url`. Both proxy URLs and account credentials are encrypted with the master key before storage. Background sync stores bounded snippets and metadata; opening a message also stores its sanitized body in the bounded SQLite reading cache. Raw MIME and attachment contents are not persisted.
 
 ## Inbox and search (M2)
 
@@ -79,11 +79,11 @@ MELDMAIL_PLAYWRIGHT_MODULE=/tmp/meldmail-browser/node_modules/playwright go test
 
 ## Reading and sending (M4)
 
-Opening a message fetches its BODYSTRUCTURE and selected text/html (preferred) or text/plain part through an independent short-lived IMAP connection. Decoded and sanitized bodies are bounded to 5MiB, and bluemonday removes active content. HTML is rendered in a sandboxed frame; remote tracking images are blocked. Message bodies, MIME and attachments are never saved by the service.
+Opening a message fetches its BODYSTRUCTURE and selected text/html (preferred) or text/plain part through an independent short-lived IMAP connection. Decoded and sanitized bodies are bounded to 5MiB, and bluemonday removes active content. HTML is rendered in a sandboxed frame; remote tracking images are blocked. After a successful on-demand read, the sanitized HTML or decoded plain text and attachment metadata are saved in SQLite. Later reads, including after restart, use that local body without contacting IMAP. The payload budget is 100MiB / 1000 messages with least-recently-used eviction, and each body remains limited to 5MiB. Deleted/invalidated messages and changed mail sources invalidate their cached bodies. Raw MIME, attachment bytes and pending outgoing approval bodies are not saved. A failed cache write leaves the current body readable and returns a `cache_warning`.
 
 Attachments are fetched by the exact PartID advertised in BODYSTRUCTURE, transfer-decoded and streamed to the HTTP response with `io.Copy`. Forwarded attachments also stream from IMAP into SMTP without a disk cache or full buffering. The forward action automatically includes the source text and attachments; its `text` field is an optional introductory note. Replies set threading headers and default to the original sender when `to` is omitted. Outgoing messages use the sending account's SMTP settings and proxy.
 
-- `GET /api/emails/:id` returns metadata, sanitized `html` or `text`, and `attachments`.
+- `GET /api/emails/:id` returns metadata, sanitized `html` or `text`, `attachments`, and cache flags: `cached` means stored locally and `local` means this response was loaded from SQLite.
 - `GET /api/emails/:id/attachments/:part_id` returns a streamed attachment download.
 - `POST /api/emails/send` accepts `account_id`, `to` (address array), optional `cc`, `subject`, `text` or `html`, `action` (`send`, `reply`, `forward`), and `email_id` for replies/forwards.
 - `PATCH /api/emails/:id/flags` accepts `is_read`, `is_starred`, `archive`, or `delete`. A 202 response means the local change is applied and remote synchronization is queued.
@@ -200,7 +200,7 @@ Run `sudo nginx -t` before reloading Nginx. Compose enables `MELDMAIL_TRUST_PROX
 
 ### Upgrades and backups
 
-Keep the master key together with a protected metadata backup. Stop the service before copying `data/` so the database and any WAL files form a consistent snapshot, then restart it. Credentials, tokens, account settings, snippets and pending flag changes are in SQLite; message bodies and attachments remain in the source mailbox. Outstanding MCP approval bodies are intentionally lost on restart and must be resubmitted.
+Keep the master key together with a protected metadata backup. Stop the service before copying `data/` so the database and any WAL files form a consistent snapshot, then restart it. Credentials, tokens, account settings, snippets, pending flag changes and locally cached opened bodies are in SQLite. Backups now contain email bodies and should be protected accordingly; attachments and raw MIME remain in the source mailbox. Outstanding MCP approval bodies are intentionally lost on restart and must be resubmitted.
 
 ```sh
 docker compose stop
@@ -221,7 +221,7 @@ docker compose build
 python3 scripts/stress-container.py
 ```
 
-`stress-container.py` requires Docker Compose 2.24.4+ (or newer), Python 3 and OpenSSL. It starts one isolated app container using the real Compose resource/runtime settings, a temporary metadata directory and an ephemeral loopback HTTP port. Local TLS IMAP fixtures run in the test process on the host; the container reaches them through `host-gateway`. No real mailbox is contacted. The script checks 10 background accounts and IDLE connections, a maximum of three simultaneous syncs, repeated REST/MCP 5MiB body reads, 24 independently paused slow readers (with verified overlap), and 20MiB streaming downloads while 15MiB of approval bodies remain in memory, RSS below 180MiB, absence of OOM/restarts, embedded frontend assets, metadata-only persistence and graceful shutdown with SSE open. Its temporary container and data are removed on exit; the regular `meldmail` deployment is untouched.
+`stress-container.py` requires Docker Compose 2.24.4+ (or newer), Python 3 and OpenSSL. It starts one isolated app container using the real Compose resource/runtime settings, a temporary metadata directory and an ephemeral loopback HTTP port. Local TLS IMAP fixtures run in the test process on the host; the container reaches them through `host-gateway`. No real mailbox is contacted. The script checks 10 background accounts and IDLE connections, a maximum of three simultaneous syncs, repeated REST/MCP 5MiB body reads, 24 concurrent slow-reader requests with body-response memory serialized, and 20MiB streaming downloads while 15MiB of approval bodies remain in memory, RSS below 180MiB, absence of OOM/restarts, embedded frontend assets, sanitized-body-only persistence (no raw MIME, attachment bytes or outgoing approval bodies) and graceful shutdown with SSE open. Its temporary container and data are removed on exit; the regular `meldmail` deployment is untouched.
 
 Real-browser checks can also be included in the final race suite:
 
@@ -255,3 +255,7 @@ Sign in with the current MeldMail administrator password, then choose **修改�
 `MELDMAIL_ADMIN_PASSWORD` in `.env` is used only to initialize an empty installation. Editing it, restarting Docker or recreating the container does not replace the existing database password. Likewise, `docker exec meldmail printenv MELDMAIL_ADMIN_PASSWORD` displays the container's startup value, not necessarily the current login password. After initialization, change the password through the web entry above. Keep the existing `MELDMAIL_MASTER_KEY`; it encrypts mailbox credentials and is unrelated to the login password.
 
 The authenticated endpoint is `POST /api/auth/password` with `current_password` and `new_password`. Wrong current passwords do not end the caller's session; repeated attempts are rate limited. Passwords and hashes are never returned in API responses or logged.
+
+### Local reading cache
+
+The 2026-11-24 requirement update permits on-demand sanitized body storage in `email_bodies`; prior metadata-only acceptance records describe the earlier design. No complete bodies are fetched during background sync. A first successful read saves the selected body, and subsequent reads prefer SQLite while the entry is retained, even offline or after restart. Capacity eviction may require an older message to be fetched again. The 100MiB limit covers cached content, not the physical SQLite/WAL file size. Attachments remain on the source mailbox and require a network connection when downloaded. HTML keeps the same sanitizer and sandbox protections when loaded locally. This is a reading cache, not a complete email archive; search still uses headers and the 500-character snippet.

@@ -42,7 +42,7 @@ onBeforeUnmount(() => controller?.abort())
   <p v-if="actionError" class="error" role="alert">{{ actionError }}</p>
   <p v-if="loading" class="list-status" role="status">正在读取邮件…</p>
   <div v-else-if="error" class="message-error"><p class="error" role="alert">{{ error }}</p><button class="secondary" @click="load">重新读取</button></div>
-  <template v-else-if="content"><iframe v-if="content.html" class="email-frame" title="邮件正文" :srcdoc="frame" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe><pre v-else class="plain-message">{{ content.text || '（这封邮件没有文本正文）' }}</pre>
+  <template v-else-if="content"><p v-if="content.cache_warning" class="error" role="status">{{ content.cache_warning }}</p><iframe v-if="content.html" class="email-frame" title="邮件正文" :srcdoc="frame" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe><pre v-else class="plain-message">{{ content.text || '（这封邮件没有文本正文）' }}</pre>
    <section v-if="content.attachments.length" class="attachments"><h3>附件 · {{ content.attachments.length }}</h3><a v-for="attachment in content.attachments" :key="attachment.part_id" :href="`/api/emails/${email.id}/attachments/${encodeURIComponent(attachment.part_id)}`" download><span>↓ {{ attachment.filename }}</span><small>{{ size(attachment.size) }}</small></a></section>
 
   </template>

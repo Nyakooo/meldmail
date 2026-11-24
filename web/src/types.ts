@@ -10,7 +10,7 @@ export interface Email {
 export interface EmailPage { emails: Email[]; next_cursor: string }
 export interface Diagnostic { stage: string; ok: boolean; message: string }
 export interface Attachment { part_id: string; filename: string; content_type: string; size: number }
-export interface EmailContent extends Email { html: string; text: string; attachments: Attachment[] }
+export interface EmailContent extends Email { cached?: boolean; local?: boolean; cache_warning?: string; html: string; text: string; attachments: Attachment[] }
 export interface EmailUpdate extends Partial<Email> { id: number; deleted?: boolean; archived?: boolean; pending?: boolean }
 export type ComposeAction = 'send' | 'reply' | 'forward'
 export interface MCPToken { id: number; name: string; scope: 'readonly' | 'readwrite'; require_approval: boolean; enabled: boolean; last_used_at: number; created_at: number }

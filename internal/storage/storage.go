@@ -31,7 +31,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		}
 		return nil, cause
 	}
-	for _, q := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA cache_size=-16000", "PRAGMA temp_store=MEMORY", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000", migrations.Initial} {
+	for _, q := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA cache_size=-16000", "PRAGMA temp_store=MEMORY", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000", migrations.Initial, migrations.EmailBodies} {
 		if _, err := db.ExecContext(ctx, q); err != nil {
 			return fail(fmt.Errorf("storage initialize: %w", err))
 		}

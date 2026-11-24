@@ -3,6 +3,9 @@ package mail
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -19,6 +22,9 @@ import (
 )
 
 var ErrInvalidMessage = errors.New("invalid outgoing message")
+
+const bodyCachePolicyVersion = 1
+
 var mailHTML = func() *bluemonday.Policy {
 	p := bluemonday.NewPolicy()
 	p.AllowElements("p", "br", "div", "span", "strong", "b", "em", "i", "u", "s", "blockquote", "pre", "code", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "table", "thead", "tbody", "tr", "th", "td", "a")
@@ -32,17 +38,64 @@ var mailHTML = func() *bluemonday.Policy {
 type EmailContent struct {
 	storage.Email
 	imapclient.Content
+	Cached       bool   `json:"cached"`
+	Local        bool   `json:"local"`
+	CacheWarning string `json:"cache_warning,omitempty"`
 }
 
 func (s *Service) Read(ctx context.Context, id int64) (result EmailContent, resultErr error) {
+	resultErr = s.ReadTo(ctx, id, func(content EmailContent) error { result = content; return nil })
+	return result, resultErr
+}
+
+// ReadTo keeps the body memory slot until the consumer finishes its response,
+// so slow HTTP clients cannot accumulate decoded bodies outside the budget.
+func (s *Service) ReadTo(ctx context.Context, id int64, consume func(EmailContent) error) error {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	release, err := s.acquireInteractive(ctx, true)
+	select {
+	case s.bodyMemory <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-s.bodyMemory }()
+	content, err := s.readBody(ctx, id)
+	if err != nil {
+		return err
+	}
+	return consume(content)
+}
+
+func (s *Service) readBody(ctx context.Context, id int64) (result EmailContent, resultErr error) {
+	e, account, folder, err := s.emailSource(ctx, id)
+	if err != nil {
+		return result, err
+	}
+	source, err := bodySource(e, account, folder)
+	if err != nil {
+		return result, err
+	}
+	cached, found, err := s.Store.Body(ctx, id, source)
+	if err != nil && !found {
+		return result, fmt.Errorf("mail read local body: %w", err)
+	}
+	if found {
+		var attachments []imapclient.Part
+		if err := json.Unmarshal([]byte(cached.AttachmentsJSON), &attachments); err != nil {
+			return result, fmt.Errorf("mail decode cached attachment metadata: %w", err)
+		}
+		result = EmailContent{Email: e, Content: imapclient.Content{HTML: cached.HTML, Text: cached.Text, Attachments: attachments}, Cached: true, Local: true}
+		if err != nil {
+			result.CacheWarning = "已读取本地正文，但缓存维护失败；请检查本地存储。"
+		}
+		return result, nil
+	}
+	release, err := s.acquireInteractive(ctx)
 	if err != nil {
 		return result, err
 	}
 	defer release()
-	e, _, f, c, err := s.openEmail(ctx, id)
+	e, account, f, c, err := s.openEmail(ctx, id)
 	if err != nil {
 		return result, err
 	}
@@ -64,12 +117,44 @@ func (s *Service) Read(ctx context.Context, id int64) (result EmailContent, resu
 	if int64(len(content.Text)) > imapclient.MaxBodyBytes {
 		return result, imapclient.ErrBodyTooLarge
 	}
-	return EmailContent{Email: e, Content: content}, nil
+	result = EmailContent{Email: e, Content: content}
+	source, err = bodySource(e, account, f)
+	if err != nil {
+		return result, err
+	}
+	attachments, cacheErr := json.Marshal(content.Attachments)
+	if cacheErr == nil {
+		cacheErr = s.Store.SaveBody(ctx, e, source, storage.CachedBody{HTML: content.HTML, Text: content.Text, AttachmentsJSON: string(attachments)})
+	}
+	if cacheErr != nil {
+		result.CacheWarning = "本地正文保存失败，本次仍可阅读；下次将重新从邮箱拉取。"
+	} else {
+		result.Cached = true
+	}
+	return result, nil
+}
+
+// Bump the policy version if the HTML sanitization policy changes. Mail source
+// changes invalidate a hit even before the background sync notices them.
+func bodySource(email storage.Email, account storage.Account, folder storage.Folder) (string, error) {
+	source := struct {
+		Version                              int
+		AccountID, FolderID                  int64
+		UID, Validity                        uint32
+		Address, Provider, Host, TLS, Folder string
+		Port                                 int
+	}{bodyCachePolicyVersion, email.AccountID, email.FolderID, email.UID, folder.UIDValidity, account.Email, account.Provider, account.IMAPHost, account.IMAPTLS, folder.Name, account.IMAPPort}
+	data, err := json.Marshal(source)
+	if err != nil {
+		return "", fmt.Errorf("mail encode body source: %w", err)
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]), nil
 }
 func (s *Service) Download(ctx context.Context, id int64, partID string, consume func(imapclient.Part, io.Reader) error) (result error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	release, err := s.acquireInteractive(ctx, false)
+	release, err := s.acquireInteractive(ctx)
 	if err != nil {
 		return err
 	}
@@ -85,18 +170,25 @@ func (s *Service) Download(ctx context.Context, id int64, partID string, consume
 	}()
 	return c.Download(ctx, e, f, partID, consume)
 }
-func (s *Service) openEmail(ctx context.Context, id int64) (storage.Email, storage.Account, storage.Folder, *imapclient.Client, error) {
+func (s *Service) emailSource(ctx context.Context, id int64) (storage.Email, storage.Account, storage.Folder, error) {
 	e, err := s.Store.Email(ctx, id)
 	if err != nil {
-		return e, storage.Account{}, storage.Folder{}, nil, fmt.Errorf("mail load metadata: %w", err)
+		return e, storage.Account{}, storage.Folder{}, fmt.Errorf("mail load metadata: %w", err)
 	}
 	a, err := s.Store.Account(ctx, e.AccountID)
 	if err != nil {
-		return e, a, storage.Folder{}, nil, fmt.Errorf("mail load account: %w", err)
+		return e, a, storage.Folder{}, fmt.Errorf("mail load account: %w", err)
 	}
 	f, err := s.Store.Folder(ctx, e.FolderID)
 	if err != nil {
-		return e, a, f, nil, fmt.Errorf("mail load folder: %w", err)
+		return e, a, f, fmt.Errorf("mail load folder: %w", err)
+	}
+	return e, a, f, nil
+}
+func (s *Service) openEmail(ctx context.Context, id int64) (storage.Email, storage.Account, storage.Folder, *imapclient.Client, error) {
+	e, a, f, err := s.emailSource(ctx, id)
+	if err != nil {
+		return e, a, f, nil, err
 	}
 	credentials, err := s.Credentials(a)
 	if err != nil {
@@ -112,28 +204,13 @@ func (s *Service) openEmail(ctx context.Context, id int64) (storage.Email, stora
 	}
 	return e, a, f, client, nil
 }
-func (s *Service) acquireInteractive(ctx context.Context, body bool) (func(), error) {
-	if body {
-		select {
-		case s.bodyMemory <- struct{}{}:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
+func (s *Service) acquireInteractive(ctx context.Context) (func(), error) {
 	select {
 	case s.interactive <- struct{}{}:
 	case <-ctx.Done():
-		if body {
-			<-s.bodyMemory
-		}
 		return nil, ctx.Err()
 	}
-	return func() {
-		<-s.interactive
-		if body {
-			<-s.bodyMemory
-		}
-	}, nil
+	return func() { <-s.interactive }, nil
 }
 
 type SendInput struct {
@@ -237,7 +314,7 @@ func (s *Service) Send(ctx context.Context, input SendInput) (result error) {
 	}
 	message.To = checked.To
 	message.CC = checked.CC
-	release, err := s.acquireInteractive(ctx, false)
+	release, err := s.acquireInteractive(ctx)
 	if err != nil {
 		return err
 	}

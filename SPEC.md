@@ -3,7 +3,7 @@
 > **致 AI 编程引擎（Codex）的执行指令**：
 > 1. 本文档是 MeldMail 项目的唯一权威设计基准（Gold Standard）。请严格按 **Milestone 0 → Milestone 6** 的顺序推进开发。
 > 2. **阶段门禁**：每完成一个 Milestone，必须编写并运行单元测试与集成验收命令，全部通过后方可进入下一阶段。
-> 3. **严禁越界**：严禁引入 Redis/Kafka/RabbitMQ/独立数据库；严禁违反 256MB 内存红线；严禁将完整邮件正文或附件落盘。
+> 3. **严禁越界**：严禁引入 Redis/Kafka/RabbitMQ/独立数据库；严禁违反 256MB 内存红线；完整正文仅允许按第 4.3 节的阅读缓存规则写入 SQLite；原始 MIME 和附件仍不得落盘。
 
 ---
 
@@ -22,7 +22,7 @@
   - Docker 容器硬限制：`mem_limit: 256m`，`cpus: 0.5`。
   - Go 运行时强制环境变量：`GOMEMLIMIT=200MiB`，`GOGC=50`。
   - 内存目标：空闲 60～120MB；读取大邮件/下载 20MB 附件时峰值严禁超过 180MB。
-- **存储红线**：SQLite 仅存邮件元数据（Metadata）+ 最多 **500 字符** 纯文本摘要（`snippet`）。**严禁将完整 HTML 正文、原始 MIME 或附件文件写入磁盘**。
+- **存储边界（2026-11-24 按用户要求修订）**：后台同步仅保存元数据与最多 **500 字符**摘要。按需阅读成功后，将经清洗的 HTML 或解码后的纯文本正文及附件元信息保存到 SQLite，供后续优先本地读取。正文总量上限 **100MiB / 1000 封**，单封正文 ≤ **5MiB**；附件元信息单封 ≤ **256KiB**。原始 MIME、附件内容和未发送的审批正文仍不得落盘。
 - **开源合规**：Apache License 2.0。所有核心代码独立实现，严禁复制 GPL/LGPL/AGPL 协议邮件项目代码。
 
 ---
@@ -47,7 +47,8 @@ meldmail/
 │   ├── mcp/                        # MCP Server（Streamable HTTP、Token 鉴权、审批流、审计日志）
 │   └── api/                        # REST API 路由、登录鉴权中间件、Handler、embed.FS 静态托管
 ├── web/                            # Vue 3 + TypeScript + Vite 前端工程
-├── migrations/001_init.sql         # SQLite 完整初始化脚本
+├── migrations/001_init.sql         # SQLite 初始元数据模型
+├── migrations/002_email_bodies.sql # 按需阅读的本地正文缓存
 ├── Dockerfile                      # 多阶段构建（Node -> Go -> Alpine）
 ├── docker-compose.yml              # 单容器生产配置（含 256MB / 0.5 CPU 限制）
 ├── LICENSE                         # Apache License 2.0
@@ -190,6 +191,12 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 ```
 
+### 3.2.1 阅读缓存扩展
+
+`migrations/002_email_bodies.sql` 定义 `email_bodies`：以 `email_id` 外键关联邮件，存储来源指纹 `source_key`、清洗后的 `html`、纯文本 `text`、`attachments_json`（仅元信息）、有效负载字节数 `size_bytes`、写入时间 `stored_at` 与访问时间 `last_access`。保留最近访问的正文，超出总字节或条目上限时淘汰旧缓存；总量限制针对内容字节数，SQLite 页、WAL 与索引另有开销。
+
+删除邮件或账号、UIDVALIDITY 重置时级联清理；邮件移动或账号邮箱地址/IMAP 来源变化时使对应缓存失效。来源指纹还包含清洗策略版本，策略升级时应提升版本。正文缓存不进入 FTS；搜索仍仅检索元数据和摘要。
+
 ### 3.3 安全规范
 - **凭据加密**：通过环境变量 `MELDMAIL_MASTER_KEY`（64 位 Hex / 32 字节）使用 `AES-256-GCM` 加密 `credentials_enc` 与 `proxy_url_enc`，密文格式 `nonce(12B) || ciphertext`。未设置时启动报错退出。
 - **Web 认证**：单用户管理员登录（首次启动通过环境变量 `MELDMAIL_ADMIN_PASSWORD` 或 Web 初始化向导设置 bcrypt 哈希存入 `settings`），使用 `HttpOnly` + `SameSite=Lax` Session Cookie；当 `MELDMAIL_TRUST_PROXY=true` 且 `X-Forwarded-Proto: https` 时自动启用 `Secure` 标志。登录接口增加简单内存级速率限制（防暴力破解）。
@@ -222,7 +229,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
    - 单封仅拉取 `UID`、`FLAGS`、`INTERNALDATE`、`ENVELOPE`、`BODYSTRUCTURE` 及 **`BODY.PEEK[TEXT]<0.4096>`**（局部拉取前 4KB，解码清洗后截断至 **500 字符** 存入 `snippet`）。
    - 每 **45 分钟** 执行一次轻量状态校验（同步已读/删除）；断线采用指数退避重连（5s -> 15s -> 30s -> 60s），连续失败 5 次降级为 3 分钟 Polling。
 4. **阶段 2（按需阅读与流式下载）**：
-   - **正文阅读**：拉取 `BODYSTRUCTURE`，定位 `text/html`（优先）和 `text/plain` 的 `PartID`，定向执行 `BODY.PEEK[<PartID>]`（单封正文硬上限 **5MB**）。服务端使用 `bluemonday` 清洗 HTML（防 XSS）后返回前端。
+   - **正文阅读**：优先读取来源指纹匹配的 SQLite 正文缓存，命中时不建立 IMAP 连接，重启后仍可复用；未命中时拉取 `BODYSTRUCTURE`，定位 `text/html`（优先）和 `text/plain` 的 `PartID`，定向执行 `BODY.PEEK[<PartID>]`（单封正文硬上限 **5MB**）。服务端使用 `bluemonday` 清洗 HTML（防 XSS）后保存缓存并返回前端。缓存写入失败不阻止本次阅读，返回固定的 `cache_warning` 提示；不记录正文或数据库错误细节。正文读取与 HTTP 输出共同持有内存限额，慢客户端不能积压完整正文。
    - **附件下载**：根据 `PartID` 定向拉取附件流（`io.Reader`），实时解码并直接 `io.Copy` 写入 HTTP `ResponseWriter`，**严禁 `io.ReadAll` 读入内存**。
 
 ---
@@ -234,7 +241,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 - `GET/POST/PUT/DELETE /api/accounts` 及 `POST /api/accounts/test`（测试代理 + IMAP/SMTP 连通性，返回清晰诊断信息）
 - `GET/PUT /api/settings/proxy`（全局默认代理配置）
 - `GET /api/emails?account_id=&folder=&unread=&q=&cursor=&limit=50`（统一收件箱列表 + FTS5 检索）
-- `GET /api/emails/:id`（实时拉取正文 HTML/Text 与附件元信息列表）
+- `GET /api/emails/:id`（优先返回本地正文；未命中则拉取、清洗并保存，含附件元信息与 `cached` / `local` 状态）
 - `GET /api/emails/:id/attachments/:part_id`（流式下载附件）
 - `PATCH /api/emails/:id/flags`（已读/未读/星标/归档/删除：先更新本地 DB 并推送 SSE，再异步同步 IMAP）
 - `POST /api/emails/send`（撰写/回复/转发，走对应账号代理与 SMTP）

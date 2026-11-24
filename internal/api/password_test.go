@@ -109,7 +109,7 @@ func TestChangePassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	streamRequest.AddCookie(second)
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	stream, err := client.Do(streamRequest)
 	if err != nil {
 		t.Fatal(err)

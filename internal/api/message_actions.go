@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/nyakooo/meldmail/internal/mail"
 	"github.com/nyakooo/meldmail/internal/mail/imapclient"
@@ -20,12 +22,40 @@ func (s *Server) readEmail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid email ID", 400)
 		return
 	}
-	content, err := s.mail.Read(r.Context(), id)
-	if err != nil {
-		messageError(w, err)
+	controller := http.NewResponseController(w)
+	if err := controller.SetWriteDeadline(time.Now().Add(90 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		http.Error(w, "response deadline unavailable", 500)
 		return
 	}
-	writeJSON(w, content)
+	canceled := make(chan struct{})
+	stop := context.AfterFunc(r.Context(), func() {
+		defer close(canceled)
+		if err := controller.SetWriteDeadline(time.Now()); err != nil {
+			return
+		}
+	})
+	defer func() {
+		if !stop() {
+			<-canceled
+		}
+		if err := controller.SetWriteDeadline(time.Time{}); err != nil {
+			return
+		}
+	}()
+	started := false
+	err = s.mail.ReadTo(r.Context(), id, func(content mail.EmailContent) error {
+		started = true
+		w.Header().Set("Content-Type", "application/json")
+		encoder := json.NewEncoder(w)
+		encoder.SetEscapeHTML(false)
+		return encoder.Encode(content)
+	})
+	if err != nil {
+		if started {
+			panic(http.ErrAbortHandler)
+		}
+		messageError(w, err)
+	}
 }
 func messageError(w http.ResponseWriter, err error) {
 	switch {
