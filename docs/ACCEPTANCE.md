@@ -55,3 +55,10 @@ The user authorized sanitized body persistence after the original M0–M6 metada
 - `go test -race ./...`, `go vet ./...` and `npm run build --prefix web`: PASS. Targeted Chrome acceptance verifies page 1/2, previous/next, account/search reset, SSE updates on a later page, mobile layout, mailbox totals and the served versioned favicon. SQL search timing remained below 50ms in the non-race search check.
 - Updated resource stress verifies actual 256MiB memory and 0.5-core CPU limits through `/api/stats`, disk availability and 10 per-account counts while mail reads/downloads proceed. RSS peak **120.03MiB**, no OOM/restart, maximum sync concurrency 3, graceful SSE shutdown **0.48s**.
 - The favicon is copied from the approved `assets/brand/meldmail-mark.svg` and referenced with a versioned URL. No logo geometry was redrawn.
+
+## 2026-11-24 focused workspace appearance
+
+- Applied the approved blue brand direction, compact rows and toolbar, restrained empty state and shared Light/Dark surface tokens across navigation, forms and dialogs. Light/Dark/System theme choice persists locally; System follows OS changes.
+- Removed CPU from the inbox UI and condensed mail counts/memory/disk into a status line. CPU diagnostics remain available through the existing authenticated API.
+- Mobile uses bottom navigation, account filtering and a compose action above the safe area.
+- `npm run build --prefix web` and the updated targeted Chrome acceptance: PASS. Browser checks cover saved dark theme after reload, light switching, no visible CPU card, mobile navigation/account panel, no horizontal overflow and existing pagination/SSE behavior affected by the layout.

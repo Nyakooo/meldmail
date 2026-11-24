@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import AccountPanel from './AccountPanel.vue'
 import ChangePassword from './ChangePassword.vue'
 import SystemStats from './SystemStats.vue'
+import ThemeSelect from './ThemeSelect.vue'
 import MessageReader from './MessageReader.vue'
 import Composer from './Composer.vue'
 import MCPPanel from './MCPPanel.vue'
@@ -151,22 +152,22 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
   <aside class="sidebar" :class="{ open: sidebarOpen }">
    <a class="brand" href="/" aria-label="MeldMail 首页"><img class="brand-icon" src="/meldmail-mark.svg" alt="">MeldMail</a>
    <button class="primary compose-button" :disabled="!accounts.length" @click="compose()">＋ 撰写邮件</button>
-   <p class="eyebrow sidebar-caption">MAILBOX</p>
+   <p class="eyebrow sidebar-caption">邮件</p>
    <nav aria-label="邮件文件夹"><button :class="{ active: folder === 'inbox' && !unread }" @click="folder = 'inbox'; unread = false; filter()"><span>▤</span>统一收件箱</button><button :class="{ active: unread }" @click="unread = !unread; filter()"><span>◉</span>未读邮件</button><button :class="{ active: folder === 'all' && !unread }" @click="folder = 'all'; unread = false; filter()"><span>▦</span>全部邮件</button><button :class="{ active: folder === 'archive' }" @click="folder = 'archive'; unread = false; filter()"><span>▣</span>已归档</button><button :class="{ active: folder === 'trash' }" @click="folder = 'trash'; unread = false; filter()"><span>♲</span>废纸篓</button></nav>
-   <div class="account-heading"><p class="eyebrow">CONNECTED ACCOUNTS</p><button class="icon-button" aria-label="添加邮箱" @click="settings = true">＋</button></div>
+   <div class="account-heading"><p class="eyebrow">已连接邮箱</p><button class="icon-button" aria-label="添加邮箱" @click="settings = true">＋</button></div>
    <button class="account-link" :class="{ active: accountId === 0 }" @click="accountId = 0; filter()"><span class="account-dot all-dot"></span>所有邮箱<span class="account-count">{{ stats?.mail.total ?? '—' }}</span></button>
    <button v-for="(account, index) in accounts" :key="account.id" class="account-link" :class="{ active: accountId === account.id }" @click="accountId = account.id; filter()"><span class="account-dot" :style="{ background: ['#397867', '#c89349', '#6579aa', '#ad6b89'][index % 4] }"></span><span class="truncate">{{ account.display_name || account.email }}</span><span class="account-count">{{ accountCount(account.id) ?? '—' }}</span><span v-if="account.status === 'error'" title="连接失败">!</span><span v-else-if="account.status === 'paused'" title="已暂停">Ⅱ</span></button>
    <div class="sidebar-footer"><small role="status">{{ connected ? '● 实时更新已连接' : '○ 正在连接实时更新' }}</small><button @click="settings = true">⚙ 邮箱与连接</button><button @click="mcpOpen = true; sidebarOpen = false">◇ AI 与 MCP <span v-if="pendingApprovals" class="approval-badge">{{ pendingApprovals }}</span></button><button @click="passwordOpen = true; sidebarOpen = false">修改登录密码</button><button @click="emit('logout')">退出登录</button><small>你的邮件，留在你的邮箱。</small></div>
   </aside>
   <button v-if="sidebarOpen" class="sidebar-shade" aria-label="关闭导航" @click="sidebarOpen = false"></button>
   <section class="mail-workspace">
-   <header class="workspace-toolbar"><button class="mobile-menu icon-button" aria-label="打开导航" @click="sidebarOpen = !sidebarOpen">☰</button><label class="search-box"><span aria-hidden="true">⌕</span><input v-model="query" type="search" maxlength="256" placeholder="搜索主题、发件人或验证码" aria-label="搜索邮件" @input="search"></label><button class="secondary sync-button" :disabled="syncing || !accounts.length" @click="sync">{{ syncing ? '同步中…' : '↻ 同步' }}</button></header>
+   <header class="workspace-toolbar"><button class="mobile-menu icon-button" aria-label="打开导航" @click="sidebarOpen = !sidebarOpen">☰</button><label class="search-box"><span aria-hidden="true">⌕</span><input v-model="query" type="search" maxlength="256" placeholder="搜索主题、发件人或验证码" aria-label="搜索邮件" @input="search"></label><ThemeSelect /><button class="secondary sync-button" :disabled="syncing || !accounts.length" @click="sync">{{ syncing ? '同步中…' : '↻ 同步' }}</button><button class="toolbar-settings icon-button" aria-label="邮箱与连接" @click="settings = true">⚙</button></header>
    <SystemStats :stats="stats" :unavailable="statsUnavailable" />
    <p v-if="notice" class="workspace-notice notice" role="status">{{ notice }}</p>
    <div v-if="error" class="workspace-error error" role="alert">{{ error }} <button class="text-button" @click="loadEmails()">重试</button></div>
    <div class="mail-columns" :class="{ 'has-selection': selected }">
     <section class="message-list" aria-label="邮件列表">
-     <header class="list-heading"><div><p class="eyebrow">{{ accountId ? accountName(accountId) : 'ALL YOUR MAIL, TOGETHER' }}</p><h1>{{ heading }}</h1><small class="filtered-total">当前筛选共 {{ total }} 封</small></div><label class="unread-toggle"><input v-model="unread" type="checkbox" @change="filter">仅未读</label></header>
+     <header class="list-heading"><div><p class="eyebrow">{{ accountId ? accountName(accountId) : '所有邮箱' }}</p><h1>{{ heading }}</h1><small class="filtered-total">当前筛选共 {{ total }} 封</small></div><label class="unread-toggle"><input v-model="unread" type="checkbox" @change="filter">仅未读</label></header>
      <div class="mobile-account-filter"><select v-model="accountId" aria-label="筛选邮箱" @change="filter"><option :value="0">所有邮箱</option><option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.display_name || a.email }}</option></select></div>
      <p v-if="loading && !emails.length" class="list-status" role="status">正在加载邮件…</p>
      <div v-else-if="!emails.length" class="empty-list"><div class="empty-symbol">✉</div><h2>{{ accounts.length ? '这里很安静' : '从连接一个邮箱开始' }}</h2><p>{{ query ? '没有找到匹配邮件，试试其他关键词。' : accounts.length ? '暂无符合条件的邮件。你可以同步邮箱，或调整筛选条件。' : '把工作与生活的来信，汇集在一个地方。' }}</p><button v-if="!accounts.length" class="primary" @click="settings = true">＋ 连接邮箱</button></div>
@@ -175,10 +176,11 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
     </section>
     <section class="reader" aria-label="邮件预览">
      <MessageReader v-if="selected" :email="selected" :account-name="accountName(selected.account_id)" @back="selected = null" @flags="applyFlags" @compose="compose" />
-     <div v-else class="reader-empty"><div class="reader-art" aria-hidden="true"><span>✉</span><i></i></div><p class="eyebrow">A LITTLE MORE FOCUS</p><h2>给每一封来信，留一点空间。</h2><p>选择一封邮件，开始阅读。</p></div>
+     <div v-else class="reader-empty"><img src="/meldmail-mark.svg" alt="" class="empty-mark"><h2>选择一封邮件</h2><p>在这里阅读、回复和处理来信。</p></div>
     </section>
    </div>
   </section>
+  <nav class="mobile-bottom-nav" aria-label="移动端导航"><button :class="{active: folder === 'inbox' && !unread}" @click="folder = 'inbox'; unread = false; filter()">收件箱</button><button :class="{active: unread}" @click="unread = !unread; filter()">未读</button><button :class="{active: folder === 'all' && !unread}" @click="folder = 'all'; unread = false; filter()">全部</button><button @click="settings = true">邮箱</button><button @click="sidebarOpen = true">设置</button></nav>
   <button class="mobile-compose primary" aria-label="撰写邮件" :disabled="!accounts.length" @click="compose()">＋</button>
   <Composer v-if="composing" :accounts="accounts" :action="composing.action" :original="composing.original" @close="composing = null" @sent="notice = '邮件已发送'" />
   <MCPPanel v-if="mcpOpen" :revision="mcpRevision" @close="mcpOpen = false" @review="reviewId = $event" @changed="refreshMCP" />
