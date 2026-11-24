@@ -113,7 +113,7 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); activeRequest?.abort(); event
 <template>
  <div class="workspace">
   <aside class="sidebar" :class="{ open: sidebarOpen }">
-   <a class="brand" href="/" aria-label="MeldMail 首页"><span class="brand-icon">M</span>MeldMail</a>
+   <a class="brand" href="/" aria-label="MeldMail 首页"><img class="brand-icon" src="/meldmail-mark.svg" alt="">MeldMail</a>
    <button class="primary compose-button" :disabled="!accounts.length" @click="compose()">＋ 撰写邮件</button>
    <p class="eyebrow sidebar-caption">MAILBOX</p>
    <nav aria-label="邮件文件夹"><button :class="{ active: folder === 'inbox' && !unread }" @click="folder = 'inbox'; unread = false; filter()"><span>▤</span>统一收件箱</button><button :class="{ active: unread }" @click="unread = !unread; filter()"><span>◉</span>未读邮件</button><button :class="{ active: folder === 'all' && !unread }" @click="folder = 'all'; unread = false; filter()"><span>▦</span>全部邮件</button><button :class="{ active: folder === 'archive' }" @click="folder = 'archive'; unread = false; filter()"><span>▣</span>已归档</button><button :class="{ active: folder === 'trash' }" @click="folder = 'trash'; unread = false; filter()"><span>♲</span>废纸篓</button></nav>

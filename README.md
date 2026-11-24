@@ -16,9 +16,28 @@ MeldMail brings multiple IMAP email accounts into one clean, responsive web inte
 
 M0–M6 are implemented and locally accepted. Provider behavior is covered by local protocol fixtures; connecting a real mailbox requires its own IMAP/SMTP access and application password. OAuth token refresh remains an extension hook.
 
+## Visual identity & interface
+
+MeldMail uses a compact, three-pane desktop mail workspace and a focused mobile inbox. Both Light and Dark themes are first-class design targets.
+
+![MeldMail official logo](assets/brand/meldmail-logo.svg)
+
+### Desktop concept
+
+![MeldMail desktop Light and Dark design](docs/design/desktop-light-dark.svg)
+
+### Mobile concept
+
+![MeldMail mobile Light and Dark design](docs/design/mobile-concept.svg)
+
+The interface is intentionally limited to personal email workflows: unified inbox, unread, starred, sent, drafts, archive, trash, account switching, search, reading, composing, replies, forwards and attachments. It does not include calendars, contacts, groups, team collaboration or unrelated productivity modules.
+
+See [DESIGN.md](docs/DESIGN.md) for the brand assets, layout rules, theme direction and mobile interaction guidelines. These images are visual references; they do not imply that every pictured UI detail is already implemented.
+
 ## Documentation
 
 - [Development specification](SPEC.md)
+- [Visual design and brand guide](docs/DESIGN.md)
 - [License](LICENSE)
 
 ## License
