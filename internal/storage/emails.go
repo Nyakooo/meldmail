@@ -20,6 +20,7 @@ type EmailQuery struct {
 	Limit     int
 }
 type EmailPage struct {
+	Total      int64   `json:"total"`
 	Emails     []Email `json:"emails"`
 	NextCursor string  `json:"next_cursor"`
 }
@@ -76,6 +77,9 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 			like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(text) + "%"
 			args = append(args, like, like, like, like)
 		}
+	}
+	if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM emails e JOIN folders f ON f.id=e.folder_id WHERE "+strings.Join(clauses, " AND "), args...).Scan(&page.Total); err != nil {
+		return page, fmt.Errorf("storage count filtered emails: %w", err)
 	}
 	if q.Cursor != "" {
 		data, err := base64.RawURLEncoding.DecodeString(q.Cursor)

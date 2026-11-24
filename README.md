@@ -278,3 +278,13 @@ The authenticated endpoint is `POST /api/auth/password` with `current_password` 
 ### Local reading cache
 
 The 2026-11-24 requirement update permits on-demand sanitized body storage in `email_bodies`; prior metadata-only acceptance records describe the earlier design. No complete bodies are fetched during background sync. A first successful read saves the selected body, and subsequent reads prefer SQLite while the entry is retained, even offline or after restart. Capacity eviction may require an older message to be fetched again. The 100MiB limit covers cached content, not the physical SQLite/WAL file size. Attachments remain on the source mailbox and require a network connection when downloaded. HTML keeps the same sanitizer and sandbox protections when loaded locally. This is a reading cache, not a complete email archive; search still uses headers and the 500-character snippet.
+
+## Runtime usage, mailbox counts and pagination
+
+The inbox displays a compact resource strip and a count beside each mailbox. Counts mean **messages already synchronized into local SQLite**, not the remote mailbox's full history; initial synchronization still fetches the most recent 100. The global count includes cached metadata in archive/trash folders; the list's filtered total follows its current folder, account, unread and search filters.
+
+The authenticated `GET /api/stats` endpoint returns mailbox totals/unread counts and memory, CPU and disk counters. Linux containers use cgroup memory usage/limits and CPU quota when available; CPU 100% represents the configured quota (0.5 cores in Compose). A first CPU sample may show “采样中”. Native process counters are used when container counters are unavailable; unsupported platforms identify unavailable counters instead of inventing values. Disk data usage includes the SQLite database, WAL and SHM files; filesystem available/total space is also shown. It does not count Docker image size. Metrics refresh approximately every 15 seconds while the page is visible, using on-demand OS reads with no metrics daemon or monitoring dependency.
+
+Mail lists now expose `total` alongside `emails` and `next_cursor`. Previous/next controls retain cursor history at 50 messages per page; changing filters/search resets to the first page. SSE updates revalidate the active page and aggregates, so a new arrival does not insert a newer message into a later page or leave an invalid next-page boundary.
+
+The favicon uses the current approved mark, with a versioned URL to replace previously cached icons.

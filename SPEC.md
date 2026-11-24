@@ -240,11 +240,12 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 - `POST /api/auth/login` / `POST /api/auth/logout` / `GET /api/auth/me`
 - `GET/POST/PUT/DELETE /api/accounts` 及 `POST /api/accounts/test`（测试代理 + IMAP/SMTP 连通性，返回清晰诊断信息）
 - `GET/PUT /api/settings/proxy`（全局默认代理配置）
-- `GET /api/emails?account_id=&folder=&unread=&q=&cursor=&limit=50`（统一收件箱列表 + FTS5 检索）
+- `GET /api/emails?account_id=&folder=&unread=&q=&cursor=&limit=50`（统一收件箱列表 + FTS5 检索；返回 `emails`、`next_cursor` 和不随游标缩小的筛选总数 `total`；前端使用前后翻页的游标历史）
 - `GET /api/emails/:id`（优先返回本地正文；未命中则拉取、清洗并保存，含附件元信息与 `cached` / `local` 状态）
 - `GET /api/emails/:id/attachments/:part_id`（流式下载附件）
 - `PATCH /api/emails/:id/flags`（已读/未读/星标/归档/删除：先更新本地 DB 并推送 SSE，再异步同步 IMAP）
 - `POST /api/emails/send`（撰写/回复/转发，走对应账号代理与 SMTP）
+- `GET /api/stats`（管理员会话鉴权；本地已同步总数/未读数、各账号汇总、内存与配额、CPU 采样、SQLite/WAL/SHM 占用和所在磁盘可用容量；无监控中间件）
 - `GET /api/events`（SSE 长连接，推送 `new_email`、`flag_updated`、`sync_status`、`mcp_approval_required`）
 - `GET/POST/DELETE /api/mcp/tokens` 及 `GET /api/mcp/approvals`、`POST /api/mcp/approvals/:id/approve`、`POST /api/mcp/approvals/:id/reject`
 

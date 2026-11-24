@@ -54,7 +54,10 @@ func pendingRemovalSQL(idSQL string, archive bool) string {
 	if archive {
 		field = "archive"
 	}
-	return "EXISTS(SELECT 1 FROM settings pending WHERE pending.key='" + flagKeyPrefix + "'||" + idSQL + " AND json_extract(pending.value,'$.change." + field + "')=1)"
+	// Materialize at most 128 pending IDs once, rather than a correlated
+	// settings lookup for every row in a full filtered-count query.
+	numericID := "CAST(substr(pending.key," + strconv.Itoa(len(flagKeyPrefix)+1) + ") AS INTEGER)"
+	return "(" + idSQL + " IN (SELECT " + numericID + " FROM settings pending WHERE pending.key GLOB '" + flagKeyPrefix + "*' AND pending.key='" + flagKeyPrefix + "'||" + numericID + " AND json_extract(pending.value,'$.change." + field + "')=1))"
 }
 func flagKey(id int64) string { return flagKeyPrefix + strconv.FormatInt(id, 10) }
 func (s *Store) QueueFlags(ctx context.Context, id int64, change FlagChange) (updated Email, resultErr error) {

@@ -47,3 +47,11 @@ The user authorized sanitized body persistence after the original M0–M6 metada
 - Storage tests cover the actual 100MiB byte budget, 1000-entry LRU budget, 5MiB body limit, migration of an existing database, policy/source mismatch, UID moves, UIDVALIDITY resets, account-source changes and cascading deletion.
 - Updated production-image stress: 10 accounts/IDLE connections, 15MiB pending approval bodies, 24 REST + 12 MCP body reads, 24 concurrent slow-reader requests (14 paused responses at peak) and twelve 20MiB streamed downloads. Ten sanitized bodies were present in SQLite and stayed within the 100MiB payload budget. Outgoing approval bodies, raw MIME and attachment bytes were not persisted. RSS peak **128.66MiB**, maximum sync concurrency 3, no OOM/restart, graceful SSE shutdown **1.60s**.
 - New migration `002_email_bodies.sql` preserves existing mailbox metadata and administrator settings. The 100MiB limit covers body-cache payloads; SQLite pages, indexes and WAL add filesystem overhead.
+
+## 2026-11-24 runtime statistics, cursor controls and favicon
+
+- Authenticated statistics cover local total/unread counts, per-account totals (including empty accounts), memory usage and limit, CPU quota-normalized samples, SQLite/WAL/SHM file sizes and filesystem available/total space. Raw database paths and credentials are not exposed.
+- Linux cgroup v2/v1 limits are detected where available; process/runtime fallbacks identify their scope. Sampling is request-driven, with no monitoring worker or external dependency. The web page refreshes metrics approximately every 15 seconds while visible.
+- `go test -race ./...`, `go vet ./...` and `npm run build --prefix web`: PASS. Targeted Chrome acceptance verifies page 1/2, previous/next, account/search reset, SSE updates on a later page, mobile layout, mailbox totals and the served versioned favicon. SQL search timing remained below 50ms in the non-race search check.
+- Updated resource stress verifies actual 256MiB memory and 0.5-core CPU limits through `/api/stats`, disk availability and 10 per-account counts while mail reads/downloads proceed. RSS peak **120.03MiB**, no OOM/restart, maximum sync concurrency 3, graceful SSE shutdown **0.48s**.
+- The favicon is copied from the approved `assets/brand/meldmail-mark.svg` and referenced with a versioned URL. No logo geometry was redrawn.

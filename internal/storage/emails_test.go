@@ -75,6 +75,9 @@ func TestUnifiedInboxSearchAndCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if first.Total != 2000 || second.Total != 2000 {
+		t.Fatal("filtered total must not shrink with the cursor")
+	}
 	seen := make(map[int64]bool)
 	for _, page := range []EmailPage{first, second} {
 		for _, e := range page.Emails {

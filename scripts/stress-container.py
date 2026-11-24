@@ -266,6 +266,15 @@ def run_container(tmp, fixture, image):
                 raise AssertionError(f'10-account background sync failed: emails={len(emails)}, IDLE={idles}')
             time.sleep(0.1)
         print('PASS: 10 background accounts synchronized, 10 independent IDLE connections', flush=True)
+        report = request('/api/stats')
+        assert report['mail']['total'] == 10 and all(account['total'] == 1 for account in report['mail']['accounts'])
+        assert report['resources']['memory']['source'] == 'container'
+        assert report['resources']['memory']['limit_bytes'] == 256 * MIB
+        assert report['resources']['cpu']['limit_cores'] == 0.5
+        assert report['resources']['disk']['available'] and report['resources']['disk']['volume_known']
+        time.sleep(1.1)
+        assert request('/api/stats')['resources']['cpu']['percent'] is not None
+        print('PASS: authenticated statistics expose container memory/CPU quotas, disk capacity and account counts', flush=True)
         cookie = '; '.join(f'{item.name}={item.value}' for item in jar)
         token = request('/api/mcp/tokens', {'name': 'M6 memory pressure', 'scope': 'readwrite', 'require_approval': True})['token']
 
@@ -330,6 +339,7 @@ def run_container(tmp, fixture, image):
                 futures += [pool.submit(mcp_body, i) for i in range(4)]
                 for future in futures:
                     future.result()
+                assert request('/api/stats')['mail']['total'] == 10
                 print(f'PASS: concurrent read/download wave {wave + 1}/3', flush=True)
         # Slow HTTP readers must not retain an unbounded collection of fully
         # decoded bodies after releasing the IMAP connection slot.
