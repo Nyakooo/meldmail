@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/nyakooo/meldmail/internal/mail"
+	"github.com/nyakooo/meldmail/internal/mail/syncer"
 	"github.com/nyakooo/meldmail/internal/storage"
 )
 
@@ -180,6 +181,12 @@ func (s *Server) syncAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	count, err := s.mail.Sync(r.Context(), id)
 	if err != nil {
+		if errors.Is(err, syncer.ErrBusy) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			writeJSON(w, map[string]interface{}{"synced": 0, "status": "syncing"})
+			return
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			storageError(w, err)
 			return

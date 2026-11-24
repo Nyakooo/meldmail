@@ -150,21 +150,20 @@ func TestBackgroundIDLERecoveryAndReconciliation(t *testing.T) {
 	defer unsubscribe()
 	appendMail("IDLE new email")
 	wait("IDLE notification did not persist new email", func() bool { return count() == 2 })
-	found := false
-drain:
-	for {
-		select {
-		case event := <-events:
-			if event.Type == "new_email" && strings.Contains(string(event.Data), "IDLE new email") {
-				found = true
+	// The DB commit happens before SSE publication. Wait for the event itself
+	// instead of assuming that observing the row also observes the next step.
+	wait("new mail SSE not published", func() bool {
+		for {
+			select {
+			case event := <-events:
+				if event.Type == "new_email" && strings.Contains(string(event.Data), "IDLE new email") {
+					return true
+				}
+			default:
+				return false
 			}
-		default:
-			break drain
 		}
-	}
-	if !found {
-		t.Fatal("new mail SSE not published")
-	}
+	})
 	// Drop the live IMAP sockets; the listener stays available for automatic recovery.
 	before := idles.Load()
 	mu.Lock()

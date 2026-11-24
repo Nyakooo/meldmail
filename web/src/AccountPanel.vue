@@ -7,6 +7,7 @@ const emit = defineEmits<{ close: []; changed: [] }>()
 const panel = ref<HTMLElement | null>(null)
 const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
 const editing = ref<number | null>(null)
+const savedAuthType = ref('')
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
@@ -16,11 +17,13 @@ const currentProxy = ref('')
 const form = reactive({ email: '', display_name: '', provider: 'gmail', auth_type: 'password', password: '', access_token: '', imap_host: '', imap_port: 993, imap_tls: 'implicit', smtp_host: '', smtp_port: 465, smtp_tls: 'implicit', proxy_mode: 'global', proxy_url: '', status: 'active' })
 function reset() {
  editing.value = null
+ savedAuthType.value = ''
  Object.assign(form, { email: '', display_name: '', provider: 'gmail', auth_type: 'password', password: '', access_token: '', imap_host: '', imap_port: 993, imap_tls: 'implicit', smtp_host: '', smtp_port: 465, smtp_tls: 'implicit', proxy_mode: 'global', proxy_url: '', status: 'active' })
  diagnostics.value = []; error.value = ''; notice.value = ''
 }
 function edit(account: Account) {
  reset(); editing.value = account.id
+ savedAuthType.value = account.auth_type
  Object.assign(form, { email: account.email, display_name: account.display_name, provider: account.provider, auth_type: account.auth_type, imap_host: account.imap_host, imap_port: account.imap_port, imap_tls: account.imap_tls, smtp_host: account.smtp_host, smtp_port: account.smtp_port, smtp_tls: account.smtp_tls, proxy_mode: account.proxy_mode, status: account.status === 'paused' ? 'paused' : 'active' })
 }
 function payload() {
@@ -38,12 +41,25 @@ async function action(work: () => Promise<void>) {
  try { await work() } catch (err) { error.value = errorMessage(err) } finally { busy.value = false }
 }
 async function save() {
+ if (!validateCredentials()) return
  await action(async () => {
-  await request<Account>(editing.value === null ? '/api/accounts' : `/api/accounts/${editing.value}`, { method: editing.value === null ? 'POST' : 'PUT', body: JSON.stringify(payload()) })
-  form.password = ''; form.access_token = ''; form.proxy_url = ''; notice.value = form.status === 'paused' ? '邮箱已保存，当前暂停同步。将同步设为“启用”后开始收信。' : (editing.value === null ? '邮箱已保存，正在后台同步最近 100 封邮件。关闭设置即可查看收件箱。' : '邮箱设置已更新，正在后台同步。关闭设置即可查看收件箱。'); emit('changed')
+  const created = editing.value === null
+  const saved = await request<Account>(created ? '/api/accounts' : `/api/accounts/${editing.value}`, { method: created ? 'POST' : 'PUT', body: JSON.stringify(payload()) })
+  edit(saved)
+  notice.value = form.status === 'paused' ? '邮箱已保存，当前暂停同步。将同步设为“启用”后开始收信。' : (created ? '邮箱已保存，正在后台同步最近 100 封邮件。关闭设置即可查看收件箱。' : '邮箱设置已更新，正在后台同步。关闭设置即可查看收件箱。'); emit('changed')
  })
 }
+function validateCredentials() {
+ if (!form.email.trim()) { error.value = '请先填写完整邮箱地址'; return false }
+ const credential = form.auth_type === 'password' ? String(payload().password).trim() : form.access_token.trim()
+ if ((editing.value === null || form.auth_type !== savedAuthType.value) && !credential) {
+  error.value = form.auth_type === 'oauth2' ? '请填写新的 Access Token；切换认证方式后不能沿用原凭据。' : form.provider === 'qq' ? '请填写 QQ 邮箱授权码；在 QQ 邮箱网页设置中开启 IMAP/SMTP 服务后生成，不是 QQ 登录密码。' : '请填写邮箱授权码或应用专用密码。'
+  notice.value = ''; return false
+ }
+ return true
+}
 async function test() {
+ if (!validateCredentials()) return
  await action(async () => { const data = await request<{ diagnostics: Diagnostic[] }>('/api/accounts/test', { method: 'POST', body: JSON.stringify(payload()) }); diagnostics.value = data.diagnostics })
 }
 async function remove(account: Account) {

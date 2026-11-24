@@ -219,7 +219,7 @@ SOFTWARE.
 ```
 
 
-## github.com/emersion/go-imap/v2 v2.0.0-beta.6
+## github.com/emersion/go-imap/v2 v2.0.0-beta.9
 
 
 ### LICENSE
@@ -251,7 +251,7 @@ SOFTWARE.
 ```
 
 
-## github.com/emersion/go-message v0.18.1
+## github.com/emersion/go-message v0.18.2
 
 
 ### LICENSE
@@ -281,7 +281,7 @@ SOFTWARE.
 ```
 
 
-## github.com/emersion/go-sasl v0.0.0-20231106173351-e73c9f7bad43
+## github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
 
 
 ### LICENSE

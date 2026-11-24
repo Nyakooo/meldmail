@@ -233,3 +233,17 @@ MELDMAIL_PLAYWRIGHT_MODULE=/tmp/meldmail-browser/node_modules/playwright go test
 They use `/usr/bin/google-chrome` by default (`MELDMAIL_CHROME` overrides it). Dependency notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); the official MCP SDK is a test-only dependency and is not linked into the production server.
 
 The accepted M6 run measured **98.28MiB peak process RSS**, three concurrent syncs and six simultaneously paused slow responses, with no OOM or container restart. Shutdown with SSE open took 0.44 seconds. Measurements describe the local fixture workload, not a guarantee for arbitrary mailbox servers or unlimited clients. Run `scripts/update-notices.py` after changing Go or Vue runtime dependencies.
+
+### Provider partial-response compatibility
+
+Some QQ IMAP responses exceed the requested 4KiB snippet partial. MeldMail still requests `BODY.PEEK[TEXT]<0.4096>`, retains only the first 4KiB and discards any extra literal bytes as a stream before reading the next message. The connection context bounds stalled transfers, and the stored snippet remains limited to 500 characters. The IMAP library includes the upstream fix that releases literal readers on connection errors, so aborting a body download cannot deadlock the account worker.
+
+Focused regression checks after account-form or snippet compatibility changes:
+
+```sh
+npm run build --prefix web
+node scripts/check-account-form.cjs
+go test ./internal/mail/imapclient -run 'TestSyncProviderIgnoresPartialLength|TestOversizedBodyAbortDoesNotDeadlock' -v
+```
+
+The account-form browser check uses isolated API fixtures and the same optional Playwright/Chrome installation described above; it never saves or contacts a real mailbox.

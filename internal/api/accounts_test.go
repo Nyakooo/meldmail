@@ -78,6 +78,19 @@ func TestAccountRoutes(t *testing.T) {
 	if len(saved.CredentialsEnc) == 0 || strings.Contains(string(saved.CredentialsEnc), "private-secret") {
 		t.Fatal("credentials not encrypted")
 	}
+	// A manual request overlapping the worker is already being handled, not a
+	// connectivity failure. No network call is made while the limiter is held.
+	func() {
+		release, err := service.Limiter.Acquire(ctx, account.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		pending := request("POST", fmt.Sprintf("/api/accounts/%d/sync", account.ID), "{}", cookie)
+		if pending.Code != http.StatusAccepted || !strings.Contains(pending.Body.String(), `"status":"syncing"`) {
+			t.Fatalf("overlapping sync: status %d, body %s", pending.Code, pending.Body.String())
+		}
+	}()
 	path := fmt.Sprintf("/api/accounts/%d", account.ID)
 	if w := request("GET", path, "", cookie); w.Code != 200 {
 		t.Fatal(w.Code)

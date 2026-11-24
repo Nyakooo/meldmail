@@ -127,11 +127,14 @@ func metadata(message *upstream.FetchMessageData) (storage.Email, error) {
 			structure = v.BodyStructure
 		case upstream.FetchItemDataBodySection:
 			if v.Literal != nil {
-				if v.Literal.Size() > 4096 {
-					return e, fmt.Errorf("imap: partial text exceeds 4096 bytes")
-				}
 				if _, err := io.Copy(&raw, io.LimitReader(v.Literal, 4096)); err != nil {
 					return e, fmt.Errorf("imap snippet read: %w", err)
+				}
+				// Some providers ignore the requested partial length. Retain only
+				// 4KiB, then discard the remainder as a stream before decoding the
+				// next response. The connection context bounds a stalled transfer.
+				if _, err := io.Copy(io.Discard, v.Literal); err != nil {
+					return e, fmt.Errorf("imap snippet drain: %w", err)
 				}
 			}
 		}
