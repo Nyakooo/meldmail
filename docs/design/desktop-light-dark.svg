@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+<title id="title">MeldMail desktop interface — Light and Dark</title><desc id="desc">A compact three-pane personal email client with navigation, unified inbox and reading pane in Light and Dark themes.</desc>
+<defs>
+ <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#149CF5"/><stop offset=".5" stop-color="#0876F2"/><stop offset=".8" stop-color="#078EDB"/><stop offset="1" stop-color="#31C66B"/></linearGradient>
+ <style>
+ text{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+ .muted{font-size:11px;fill:#8490a0}.small{font-size:12px}.tiny{font-size:10px}
+ .title{font-size:18px;font-weight:700}.sender{font-size:12px;font-weight:650}.subject{font-size:12px;font-weight:600}.snippet{font-size:10px}
+ .light .surface{fill:#fff}.light .side{fill:#f7f9fc}.light .line{stroke:#e8edf3}.light .main{fill:#172033}.light .muted{fill:#8792a2}.light .row-selected{fill:#eaf2ff}.light .blue{fill:#1677f2}.light .pill{fill:#edf4ff}
+ .dark .surface{fill:#171c26}.dark .side{fill:#141923}.dark .line{stroke:#2b3442}.dark .main{fill:#e9eef6}.dark .muted{fill:#97a3b4}.dark .row-selected{fill:#1e3c68}.dark .blue{fill:#3488ff}.dark .pill{fill:#263b59}
+ </style>
+</defs>
+<rect width="1600" height="900" fill="#eef2f7"/>
+<text x="40" y="35" font-size="15" font-weight="700" fill="#526176">MELDMAIL · DESKTOP CONCEPT</text>
+<text x="1560" y="35" font-size="11" text-anchor="end" fill="#8390a2">Personal unified email · Three-pane workspace</text>
+<g class="light" transform="translate(30 58)">
+ <rect class="surface" width="750" height="790" rx="16" stroke="#dce3ed"/>
+ <rect class="surface" x="0" y="0" width="750" height="62" rx="16"/>
+ <path class="line" d="M0 62H750"/>
+ <path d="M22 39 32 20q2-4 5 0l5 10q2 4 5 0l11-12q3-4 5 0l2 18" fill="none" stroke="url(#brand)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+ <text class="main" x="76" y="38" font-size="18" font-weight="750">MeldMail</text>
+ <rect x="210" y="15" width="300" height="34" rx="8" fill="#f5f7fa" stroke="#e7ebf1"/><text class="muted small" x="228" y="37">⌕  Search emails, senders, subjects…</text>
+ <text class="main" x="650" y="37" font-size="16">☼</text><text class="main" x="696" y="37" font-size="16">⚙</text>
+ <rect class="side" x="0" y="62" width="164" height="728"/><path class="line" d="M164 62V790"/>
+ <rect x="14" y="82" width="136" height="38" rx="8" fill="#1677f2"/><text x="29" y="106" font-size="12" font-weight="650" fill="#fff">＋  Compose</text>
+ <text class="muted tiny" x="20" y="150" font-weight="700">MAIL</text>
+ <rect x="10" y="162" width="144" height="34" rx="7" fill="#eaf2ff"/><text x="24" y="184" fill="#1266d8" font-size="12" font-weight="700">▣  Unified Inbox</text>
+ <text class="main small" x="24" y="222">◉  Unread</text><text class="main small" x="24" y="258">☆  Starred</text><text class="main small" x="24" y="294">➤  Sent</text><text class="main small" x="24" y="330">▤  Drafts</text><text class="main small" x="24" y="366">▣  Archive</text><text class="main small" x="24" y="402">♢  Spam</text><text class="main small" x="24" y="438">▧  Trash</text>
+ <path class="line" d="M14 462H150"/><text class="muted tiny" x="20" y="487" font-weight="700">ACCOUNTS</text>
+ <circle cx="26" cy="516" r="5" fill="#4285f4"/><text class="main small" x="40" y="520">Gmail</text><text class="muted tiny" x="40" y="535">name@gmail.com</text>
+ <circle cx="26" cy="565" r="5" fill="#e74b3c"/><text class="main small" x="40" y="569">163 Mail</text><text class="muted tiny" x="40" y="584">name@163.com</text>
+ <circle cx="26" cy="614" r="5" fill="#28a7e8"/><text class="main small" x="40" y="618">QQ Mail</text><text class="muted tiny" x="40" y="633">name@qq.com</text>
+ <text class="muted small" x="20" y="760">⚙  Settings</text>
+ <rect class="surface" x="164" y="62" width="260" height="728"/><path class="line" d="M424 62V790"/>
+ <text class="main title" x="184" y="101">Unified Inbox</text><text class="muted tiny" x="184" y="122">1–50 of 3,842 messages</text>
+ <rect class="pill" x="182" y="140" width="42" height="22" rx="11"/><text x="203" y="155" text-anchor="middle" fill="#1266d8" class="tiny">All</text><text class="muted tiny" x="238" y="155">Unread</text><text class="muted tiny" x="295" y="155">Attachments</text>
+ <g>
+  <rect class="row-selected" x="172" y="174" width="244" height="70" rx="6"/><circle cx="186" cy="193" r="3.5" fill="#1677f2"/><text class="main sender" x="198" y="197">Notion Team</text><text class="muted tiny" x="395" y="197" text-anchor="end">10:24</text><text class="main subject" x="198" y="215">Your workspace has an update</text><text class="muted snippet" x="198" y="231">We've shipped several improvements…</text>
+  <path class="line" d="M176 250H414"/><circle cx="186" cy="270" r="3.5" fill="#1677f2"/><text class="main sender" x="198" y="274">Airbnb</text><text class="muted tiny" x="395" y="274" text-anchor="end">09:48</text><text class="main subject" x="198" y="292">Your booking is confirmed</text><text class="muted snippet" x="198" y="308">Your reservation for Tokyo…</text>
+  <path class="line" d="M176 326H414"/><circle cx="186" cy="346" r="3.5" fill="#1677f2"/><text class="main sender" x="198" y="350">Google</text><text class="muted tiny" x="395" y="350" text-anchor="end">09:31</text><text class="main subject" x="198" y="368">Security alert: new sign-in</text><text class="muted snippet" x="198" y="384">A new sign-in to your account…</text>
+  <path class="line" d="M176 402H414"/><text class="main sender" x="198" y="426">Stripe</text><text class="muted tiny" x="395" y="426" text-anchor="end">08:57</text><text class="main subject" x="198" y="444">Your February statement is ready</text><text class="muted snippet" x="198" y="460">Your monthly statement is available…</text>
+  <path class="line" d="M176 478H414"/><text class="main sender" x="198" y="502">Figma</text><text class="muted tiny" x="395" y="502" text-anchor="end">08:21</text><text class="main subject" x="198" y="520">New features: annotations</text><text class="muted snippet" x="198" y="536">A few updates to help your team…</text>
+  <path class="line" d="M176 554H414"/><text class="main sender" x="198" y="578">The Verge</text><text class="muted tiny" x="395" y="578" text-anchor="end">Yesterday</text><text class="main subject" x="198" y="596">Today's technology briefing</text><text class="muted snippet" x="198" y="612">Latest in AI, gadgets and more…</text>
+  <path class="line" d="M176 630H414"/><text class="main sender" x="198" y="654">GitHub</text><text class="muted tiny" x="395" y="654" text-anchor="end">Yesterday</text><text class="main subject" x="198" y="672">Action needed: verify email</text><text class="muted snippet" x="198" y="688">Please verify your email address…</text>
+ </g>
+ <rect class="surface" x="424" y="62" width="326" height="728"/>
+ <path class="line" d="M424 126H750"/>
+ <text class="muted small" x="446" y="101">←   →</text><text class="muted small" x="664" y="101">▣   ☆   ⋯</text>
+ <text class="main" x="448" y="164" font-size="20" font-weight="700">Your workspace has an update</text>
+ <rect class="pill" x="448" y="180" width="70" height="22" rx="11"/><text x="483" y="195" text-anchor="middle" fill="#1266d8" class="tiny">Product</text>
+ <circle cx="466" cy="240" r="17" fill="#e7efff"/><text x="466" y="245" text-anchor="middle" fill="#1677f2" font-size="13" font-weight="700">N</text>
+ <text class="main sender" x="492" y="237">Notion Team</text><text class="muted tiny" x="492" y="254">team@notion.so</text><text class="muted tiny" x="728" y="237" text-anchor="end">10:24 AM</text>
+ <path class="line" d="M448 276H726"/>
+ <text class="main small" x="448" y="310">Hi there,</text><text class="main small" x="448" y="344">Your workspace has an update. We've shipped</text><text class="main small" x="448" y="364">several improvements to make your workflow</text><text class="main small" x="448" y="384">faster and more focused.</text>
+ <rect x="448" y="414" width="278" height="116" rx="9" fill="#f5f8fc" stroke="#e8edf3"/>
+ <text class="main sender" x="466" y="442">What's new</text><text class="muted small" x="466" y="466">•  Faster search and navigation</text><text class="muted small" x="466" y="490">•  Improved account sync stability</text><text class="muted small" x="466" y="514">•  More control over notifications</text>
+ <text class="main small" x="448" y="566">Best regards,</text><text class="main small" x="448" y="588">The Notion Team</text>
+ <rect x="448" y="712" width="84" height="34" rx="7" fill="#1677f2"/><text x="490" y="734" text-anchor="middle" fill="#fff" font-size="11" font-weight="650">Reply</text><rect x="542" y="712" width="84" height="34" rx="7" fill="#fff" stroke="#d8e0ea"/><text class="main tiny" x="584" y="733" text-anchor="middle">Archive</text><rect x="636" y="712" width="84" height="34" rx="7" fill="#fff" stroke="#d8e0ea"/><text class="main tiny" x="678" y="733" text-anchor="middle">Delete</text>
+ <rect x="0" y="0" width="750" height="790" rx="16" fill="none" stroke="#dce3ed"/>
+ <rect x="0" y="862" width="750" height="0" fill="none"/><text x="375" y="824" text-anchor="middle" fill="#5f6f82" font-size="12" font-weight="700">LIGHT MODE</text>
+</g>
+<g class="dark" transform="translate(820 58)">
+ <rect class="surface" width="750" height="790" rx="16" stroke="#2d3644"/>
+ <rect class="surface" x="0" y="0" width="750" height="62" rx="16"/><path class="line" d="M0 62H750"/>
+ <path d="M22 39 32 20q2-4 5 0l5 10q2 4 5 0l11-12q3-4 5 0l2 18" fill="none" stroke="url(#brand)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+ <text class="main" x="76" y="38" font-size="18" font-weight="750">MeldMail</text>
+ <rect x="210" y="15" width="300" height="34" rx="8" fill="#202735" stroke="#303a49"/><text class="muted small" x="228" y="37">⌕  Search emails, senders, subjects…</text><text class="main" x="650" y="37" font-size="16">☾</text><text class="main" x="696" y="37" font-size="16">⚙</text>
+ <rect class="side" x="0" y="62" width="164" height="728"/><path class="line" d="M164 62V790"/>
+ <rect x="14" y="82" width="136" height="38" rx="8" fill="#1677f2"/><text x="29" y="106" font-size="12" font-weight="650" fill="#fff">＋  Compose</text>
+ <text class="muted tiny" x="20" y="150" font-weight="700">MAIL</text><rect x="10" y="162" width="144" height="34" rx="7" fill="#263b59"/><text x="24" y="184" fill="#8fc0ff" font-size="12" font-weight="700">▣  Unified Inbox</text>
+ <text class="main small" x="24" y="222">◉  Unread</text><text class="main small" x="24" y="258">☆  Starred</text><text class="main small" x="24" y="294">➤  Sent</text><text class="main small" x="24" y="330">▤  Drafts</text><text class="main small" x="24" y="366">▣  Archive</text><text class="main small" x="24" y="402">♢  Spam</text><text class="main small" x="24" y="438">▧  Trash</text>
+ <path class="line" d="M14 462H150"/><text class="muted tiny" x="20" y="487" font-weight="700">ACCOUNTS</text>
+ <circle cx="26" cy="516" r="5" fill="#4285f4"/><text class="main small" x="40" y="520">Gmail</text><text class="muted tiny" x="40" y="535">name@gmail.com</text>
+ <circle cx="26" cy="565" r="5" fill="#e74b3c"/><text class="main small" x="40" y="569">163 Mail</text><text class="muted tiny" x="40" y="584">name@163.com</text>
+ <circle cx="26" cy="614" r="5" fill="#28a7e8"/><text class="main small" x="40" y="618">QQ Mail</text><text class="muted tiny" x="40" y="633">name@qq.com</text>
+ <text class="muted small" x="20" y="760">⚙  Settings</text>
+ <rect class="surface" x="164" y="62" width="260" height="728"/><path class="line" d="M424 62V790"/>
+ <text class="main title" x="184" y="101">Unified Inbox</text><text class="muted tiny" x="184" y="122">1–50 of 3,842 messages</text>
+ <rect class="pill" x="182" y="140" width="42" height="22" rx="11"/><text x="203" y="155" text-anchor="middle" fill="#8fc0ff" class="tiny">All</text><text class="muted tiny" x="238" y="155">Unread</text><text class="muted tiny" x="295" y="155">Attachments</text>
+ <g>
+  <rect class="row-selected" x="172" y="174" width="244" height="70" rx="6"/><circle cx="186" cy="193" r="3.5" fill="#3488ff"/><text class="main sender" x="198" y="197">Notion Team</text><text class="muted tiny" x="395" y="197" text-anchor="end">10:24</text><text class="main subject" x="198" y="215">Your workspace has an update</text><text class="muted snippet" x="198" y="231">We've shipped several improvements…</text>
+  <path class="line" d="M176 250H414"/><circle cx="186" cy="270" r="3.5" fill="#3488ff"/><text class="main sender" x="198" y="274">Airbnb</text><text class="muted tiny" x="395" y="274" text-anchor="end">09:48</text><text class="main subject" x="198" y="292">Your booking is confirmed</text><text class="muted snippet" x="198" y="308">Your reservation for Tokyo…</text>
+  <path class="line" d="M176 326H414"/><circle cx="186" cy="346" r="3.5" fill="#3488ff"/><text class="main sender" x="198" y="350">Google</text><text class="muted tiny" x="395" y="350" text-anchor="end">09:31</text><text class="main subject" x="198" y="368">Security alert: new sign-in</text><text class="muted snippet" x="198" y="384">A new sign-in to your account…</text>
+  <path class="line" d="M176 402H414"/><text class="main sender" x="198" y="426">Stripe</text><text class="muted tiny" x="395" y="426" text-anchor="end">08:57</text><text class="main subject" x="198" y="444">Your February statement is ready</text><text class="muted snippet" x="198" y="460">Your monthly statement is available…</text>
+  <path class="line" d="M176 478H414"/><text class="main sender" x="198" y="502">Figma</text><text class="muted tiny" x="395" y="502" text-anchor="end">08:21</text><text class="main subject" x="198" y="520">New features: annotations</text><text class="muted snippet" x="198" y="536">A few updates to help your team…</text>
+  <path class="line" d="M176 554H414"/><text class="main sender" x="198" y="578">The Verge</text><text class="muted tiny" x="395" y="578" text-anchor="end">Yesterday</text><text class="main subject" x="198" y="596">Today's technology briefing</text><text class="muted snippet" x="198" y="612">Latest in AI, gadgets and more…</text>
+  <path class="line" d="M176 630H414"/><text class="main sender" x="198" y="654">GitHub</text><text class="muted tiny" x="395" y="654" text-anchor="end">Yesterday</text><text class="main subject" x="198" y="672">Action needed: verify email</text><text class="muted snippet" x="198" y="688">Please verify your email address…</text>
+ </g>
+ <rect class="surface" x="424" y="62" width="326" height="728"/><path class="line" d="M424 126H750"/>
+ <text class="muted small" x="446" y="101">←   →</text><text class="muted small" x="664" y="101">▣   ☆   ⋯</text>
+ <text class="main" x="448" y="164" font-size="20" font-weight="700">Your workspace has an update</text>
+ <rect class="pill" x="448" y="180" width="70" height="22" rx="11"/><text x="483" y="195" text-anchor="middle" fill="#8fc0ff" class="tiny">Product</text>
+ <circle cx="466" cy="240" r="17" fill="#263b59"/><text x="466" y="245" text-anchor="middle" fill="#8fc0ff" font-size="13" font-weight="700">N</text>
+ <text class="main sender" x="492" y="237">Notion Team</text><text class="muted tiny" x="492" y="254">team@notion.so</text><text class="muted tiny" x="728" y="237" text-anchor="end">10:24 AM</text>
+ <path class="line" d="M448 276H726"/>
+ <text class="main small" x="448" y="310">Hi there,</text><text class="main small" x="448" y="344">Your workspace has an update. We've shipped</text><text class="main small" x="448" y="364">several improvements to make your workflow</text><text class="main small" x="448" y="384">faster and more focused.</text>
+ <rect x="448" y="414" width="278" height="116" rx="9" fill="#202735" stroke="#303a49"/><text class="main sender" x="466" y="442">What's new</text><text class="muted small" x="466" y="466">•  Faster search and navigation</text><text class="muted small" x="466" y="490">•  Improved account sync stability</text><text class="muted small" x="466" y="514">•  More control over notifications</text>
+ <text class="main small" x="448" y="566">Best regards,</text><text class="main small" x="448" y="588">The Notion Team</text>
+ <rect x="448" y="712" width="84" height="34" rx="7" fill="#1677f2"/><text x="490" y="734" text-anchor="middle" fill="#fff" font-size="11" font-weight="650">Reply</text><rect x="542" y="712" width="84" height="34" rx="7" fill="#202735" stroke="#3a4554"/><text class="main tiny" x="584" y="733" text-anchor="middle">Archive</text><rect x="636" y="712" width="84" height="34" rx="7" fill="#202735" stroke="#3a4554"/><text class="main tiny" x="678" y="733" text-anchor="middle">Delete</text>
+ <rect x="0" y="0" width="750" height="790" rx="16" fill="none" stroke="#2d3644"/>
+ <text x="375" y="824" text-anchor="middle" fill="#aab5c5" font-size="12" font-weight="700">DARK MODE</text>
+</g>
+</svg>
