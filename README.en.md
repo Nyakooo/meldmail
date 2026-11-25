@@ -199,6 +199,27 @@ Reopening an editor restores the complete saved proxy URL for review and editing
 - If the host connects but the container cannot, check DNS, IPv4/IPv6 and proxy reachability separately.
 - Trash and archived messages can be restored to Inbox. Move operations stay disabled while awaiting provider confirmation to prevent duplicate submissions.
 
+
+### Optional host proxy port (Linux)
+
+For Mihomo/Clash listening on the deployment server's loopback HTTP or mixed port, set:
+
+```dotenv
+MELDMAIL_HOST_PROXY_PORT=7890
+```
+
+Run `./deploy.sh`. It automatically adds `docker-compose.host-proxy.yml` and uses host networking to reach the host's loopback proxy. The web server still binds only to `127.0.0.1:${MELDMAIL_HTTP_PORT:-18085}`; Nginx stays unchanged. No public proxy listener is needed. This must be a port on the deployment server, not on the browser's computer.
+
+Select **Use shared proxy** only for mailboxes that need it. Direct and independent mailbox connections remain independent. On each application startup, the environment port takes precedence over the stored shared proxy; unchanged values are not rewritten. The web editor shows the source and becomes read-only. Clearing the variable and redeploying removes the previously environment-managed proxy. If never enabled, manual shared proxy settings remain untouched. Administrator passwords and master keys are unaffected.
+
+After editing `.env`, rerun `./deploy.sh` to recreate the container. `docker restart` does not reload `.env`. For source builds:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.host-proxy.yml up -d --build
+```
+
+With no port configured, the default deployment keeps bridge networking. Host mode has no published port mapping in `docker compose ps`; access the same host HTTP port. This option targets Linux Docker Engine and requires Compose support for `!reset`; upgrade the Compose plugin if it reports an unknown tag.
+
 ## Updates, rollback and cleanup
 
 Wait for the relevant GHCR workflow to succeed, then run in the server checkout:

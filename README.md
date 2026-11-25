@@ -199,6 +199,27 @@ mkdir -p data
 - 宿主机连接成功而容器失败时，分别检查 DNS、IPv4/IPv6 和代理可达性。
 - 废纸篓与归档邮件可恢复到收件箱。移动确认期间会禁用相关操作，避免重复提交。
 
+
+### 宿主机代理端口（Linux，可选）
+
+如果 Mihomo/Clash 的 HTTP 或混合端口监听在部署服务器的 `127.0.0.1:7890`，在 `.env` 中设置：
+
+```dotenv
+MELDMAIL_HOST_PROXY_PORT=7890
+```
+
+运行 `./deploy.sh`，脚本会自动叠加 `docker-compose.host-proxy.yml`，切换为 host 网络，让容器访问宿主机回环代理。网页仍仅监听 `127.0.0.1:${MELDMAIL_HTTP_PORT:-18085}`，Nginx 配置不变；无需公开代理端口或开启允许局域网连接。此端口必须属于部署服务器，不能填浏览器所在电脑的本地端口。
+
+需要代理的邮箱选择“使用共用代理”，不需要的继续“直接连接”。该选项不强制覆盖独立邮箱代理。每次应用启动，环境中的端口优先更新数据库里的共用代理；值相同时不重复写入。启用期间网页显示配置来源并只读。清空该变量并重新部署，会清除之前由环境生成的共用代理；从未启用时，不影响网页手动保存的共用代理。管理员密码和主密钥不参与同步。
+
+修改 `.env` 后执行 `./deploy.sh` 重新创建容器，单独 `docker restart` 不会读取更新的 `.env`。源码构建时手动叠加：
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.host-proxy.yml up -d --build
+```
+
+未配置端口时，默认 Compose 继续使用桥接网络。host 模式下 `docker compose ps` 不显示端口映射，直接访问原来的宿主机端口即可。此方案面向 Linux Docker Engine，并要求 Compose 支持 `!reset`；若提示未知标签，请升级 Compose 插件。
+
 ## 更新、回滚与清理
 
 更新前确认对应 GHCR 工作流已成功，再在服务器项目目录执行：

@@ -9,7 +9,7 @@ const accounts = [
  { id: 2, email: 'two@qq.com', display_name: 'Two', provider: 'qq', auth_type: 'password', imap_host: 'imap.qq.com', imap_port: 993, imap_tls: 'implicit', smtp_host: 'smtp.qq.com', smtp_port: 465, smtp_tls: 'implicit', proxy_mode: 'socks5', status: 'active', last_error: '', last_sync_at: 1 }
 ];
 const emails = [[1,'inbox',false],[1,'inbox',true],[1,'archive',false],[1,'other',true],[1,'trash',false],[2,'inbox',false],[2,'archive',true],[2,'trash',true]].map(([account_id,folder_role,is_read],i)=>({id:i+1,account_id,folder_id:i+1,folder_role,is_read,is_starred:false,uid:i+1,subject:`Message ${i+1}`,from_name:'Sender',from_addr:'sender@example.com',snippet:'Fixture message',has_attachments:false,date:1700000000+i,to_addrs:'[]',cc_addrs:'[]'}));
-const streams = new Set(); let importCalls = 0; let exportCalls = 0; let defaultProxy = '';
+const streams = new Set(); let importCalls = 0; let exportCalls = 0; let defaultProxy = ''; let managed = false;
 function category(rows){return {inbox:rows.filter(x=>x.folder_role==='inbox').length,all:rows.filter(x=>x.folder_role!=='trash').length,unread:rows.filter(x=>x.folder_role!=='trash'&&!x.is_read).length,archive:rows.filter(x=>x.folder_role==='archive').length,trash:rows.filter(x=>x.folder_role==='trash').length};}
 function summary(){return {total:emails.length,unread:emails.filter(e=>!e.is_read).length,categories:category(emails),accounts:accounts.map(a=>{const rows=emails.filter(e=>e.account_id===a.id);return {...a,total:rows.length,unread:rows.filter(e=>!e.is_read).length,categories:category(rows)}})};}
 const envelope = {format:'meldmail-config',version:1,kdf:'pbkdf2-sha256-600000',salt:'Zml4dHVyZQ==',data:'ZW5jcnlwdGVkLWZpeHR1cmU='};
@@ -22,7 +22,7 @@ const server = createServer(async(req,res)=>{
  if(path==='/api/accounts'&&req.method==='GET')return reply(accounts);
  if(path==='/api/settings/proxy/edit')return reply({url:defaultProxy});
  if(path==='/api/accounts/2/proxy')return reply({url:'socks5://user:saved-secret@proxy.example:1080'});
- if(path==='/api/settings/proxy'){if(req.method==='PUT'){let data='';for await(const chunk of req)data+=chunk;defaultProxy=JSON.parse(data).url;}return reply({url:defaultProxy});}
+ if(path==='/api/settings/proxy'){if(req.method==='PUT'){let data='';for await(const chunk of req)data+=chunk;defaultProxy=JSON.parse(data).url;}return reply({url:defaultProxy,managed});}
  if(['/api/mcp/approvals','/api/mcp/tokens','/api/mcp/audit'].includes(path))return reply([]);
  if(path==='/api/stats')return reply({mail:summary(),resources:{timestamp:1,memory:{used_bytes:1,limit_bytes:268435456,source:'container'},cpu:{percent:null,limit_cores:.5},disk:{available:true,data_bytes:1,volume_known:false}}});
  if(path==='/api/emails'){
@@ -58,6 +58,11 @@ const server = createServer(async(req,res)=>{
   if(metrics.length!==2||JSON.stringify(metrics[0])!==JSON.stringify(metrics[1])||metrics[0].width!==metrics[0].height)throw Error('sync and theme controls do not match '+JSON.stringify(metrics));
  };
  await matchingControls();
+ if(await page.locator('.workspace-toolbar .toolbar-settings').count())throw Error('duplicate settings entry remains');
+ const footer=page.locator('.sidebar .footer-actions');
+ const starts=await footer.locator('button').evaluateAll(items=>items.map(el=>({icon:el.querySelector('svg').getBoundingClientRect().x,text:el.querySelector('span').getBoundingClientRect().x})));
+ if(starts.length!==4||starts.some(item=>item.icon!==starts[0].icon||item.text!==starts[0].text))throw Error('footer actions are misaligned');
+
 
  for(const [name,want] of [['未读邮件',['3','2','1']],['已归档',['2','1','1']],['废纸篓',['2','1','1']],['全部邮件',['6','4','2']],['统一收件箱',['3','2','1']]]){
   await page.getByRole('button',{name,exact:true}).click();const got=await counts();if(JSON.stringify(got)!==JSON.stringify(want))throw Error(`category counts stale: ${name}: ${got}`);
@@ -148,12 +153,20 @@ const server = createServer(async(req,res)=>{
 
  await mcp.getByRole('button',{name:'关闭 MCP 设置',exact:true}).click();
  await page.getByRole('button',{name:'切换为深色',exact:true}).click();
- await page.getByRole('button',{name:'⚙ 邮箱与连接',exact:true}).click();
+ await page.getByRole('button',{name:'邮箱与连接',exact:true}).click();
  if(await panel.evaluate(el=>getComputedStyle(el).backgroundColor)!=='rgb(37, 40, 45)')throw Error('dark modal theme mismatch');
  if(await panel.evaluate(el=>getComputedStyle(el).scrollbarColor)==='auto')throw Error('dark scrollbar unthemed');
  await panel.getByRole('button',{name:'关闭设置',exact:true}).click();await matchingControls();
  await page.locator('.workspace-toolbar').screenshot({path:'/tmp/meldmail-toolbar-dark.png'});
 
+ managed=true;defaultProxy='http://127.0.0.1:7890';
+ await page.getByRole('button',{name:'邮箱与连接',exact:true}).click();
+ await panel.getByRole('button',{name:'共用代理（可选）',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('.global-proxy-panel input')?.value==='http://127.0.0.1:7890');
+ if(await panel.getByLabel('共用代理 URL',{exact:true}).getAttribute('readonly')===null)throw Error('environment proxy is editable');
+ if(await panel.getByRole('button',{name:'保存共用代理',exact:true}).count())throw Error('environment proxy can be overwritten');
+ await panel.getByText('共用代理由 .env 管理，请修改 MELDMAIL_HOST_PROXY_PORT 后重新部署。',{exact:true}).waitFor();
+ await panel.getByRole('button',{name:'关闭设置',exact:true}).click();
  if(errors.length)throw Error(errors.join('\n'));
  console.log('PASS: category-linked counts, SSE counts, actionable status, encrypted transfer UI, wide/thin-scrollbar modals, matching toolbar icons, visible proxy URLs and mobile layout');
  }finally{await browser.close();for(const stream of streams)stream.end();server.closeAllConnections();server.close();}

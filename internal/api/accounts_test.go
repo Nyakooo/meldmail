@@ -147,4 +147,15 @@ func TestAccountRoutes(t *testing.T) {
 	if w := request("GET", path, "", cookie); w.Code != 404 {
 		t.Fatal("account not removed")
 	}
+	if err := service.ConfigureHostProxy(ctx, "http://127.0.0.1:7890"); err != nil {
+		t.Fatal(err)
+	}
+	w = request("GET", "/api/settings/proxy", "", cookie)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"managed":true`) || !strings.Contains(w.Body.String(), "127.0.0.1:7890") {
+		t.Fatal("environment proxy source missing", w.Code)
+	}
+	if response := request("PUT", "/api/settings/proxy", `{"url":""}`, cookie); response.Code != http.StatusConflict {
+		t.Fatal("web overwrote env proxy", response.Code)
+	}
+
 }

@@ -34,6 +34,8 @@ Authenticate with `POST /api/auth/login` (`{"password":"..."}`), retaining the s
 - `GET /api/accounts/:id/proxy` and `GET /api/settings/proxy/edit` return the complete saved URL for authenticated editing, including proxy credentials. Responses use `Cache-Control: no-store`; ordinary account lists and proxy summaries remain redacted.
 - `GET/PUT /api/settings/proxy` inspects or sets the global proxy (`{"url":"http://user:password@host:port"}`). GET removes user credentials from the response. An empty URL disables the global proxy.
 
+Linux deployments can set `MELDMAIL_HOST_PROXY_PORT` to an HTTP/mixed loopback proxy port (1–65535). `deploy.sh` selects the host-network Compose overlay automatically. Startup transactionally synchronizes this environment-owned shared proxy to encrypted settings; removing the port clears only a previously environment-owned proxy. `/api/settings/proxy` returns `managed: true` while active, and PUT returns 409. Mailboxes must explicitly select `global`; direct and independent settings remain unaffected. Recreate containers to apply changed `.env` values.
+
 An account's `proxy_mode` defaults to `direct` and can be `global`, `direct`, `http`, `https`, or `socks5`. Only explicitly selected `global` accounts use the optional shared proxy. Explicit proxy modes use `proxy_url`. Both proxy URLs and account credentials are encrypted with the master key before storage. Background sync stores bounded snippets and metadata; opening a message also stores its sanitized body in the bounded SQLite reading cache. Raw MIME and attachment contents are not persisted.
 
 ## Inbox and search (M2)

@@ -25,16 +25,17 @@ import (
 )
 
 type Service struct {
-	Store       *storage.Store
-	Cipher      *secret.Cipher
-	Limiter     *syncer.Limiter
-	TLSConfig   *tls.Config
-	Events      *sse.Broker
-	Workers     *syncer.Manager
-	interactive chan struct{}
-	bodyMemory  chan struct{}
-	flagWake    chan struct{}
-	configWork  chan struct{}
+	HostProxyURL string // Immutable after startup; supplied by deployment configuration.
+	Store        *storage.Store
+	Cipher       *secret.Cipher
+	Limiter      *syncer.Limiter
+	TLSConfig    *tls.Config
+	Events       *sse.Broker
+	Workers      *syncer.Manager
+	interactive  chan struct{}
+	bodyMemory   chan struct{}
+	flagWake     chan struct{}
+	configWork   chan struct{}
 }
 
 func New(store *storage.Store, key []byte) (*Service, error) {
@@ -182,6 +183,9 @@ func (s *Service) AccountProxyURL(account storage.Account) (string, error) {
 	return string(plain), nil
 }
 func (s *Service) GlobalProxy(ctx context.Context) (string, error) {
+	if s.HostProxyURL != "" {
+		return s.HostProxyURL, nil
+	}
 	value, err := s.Store.Setting(ctx, "global_proxy_enc")
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -203,6 +207,9 @@ func (s *Service) GlobalProxy(ctx context.Context) (string, error) {
 	return string(plain), nil
 }
 func (s *Service) SetGlobalProxy(ctx context.Context, endpoint string) error {
+	if s.HostProxyURL != "" {
+		return fmt.Errorf("shared proxy is managed by MELDMAIL_HOST_PROXY_PORT")
+	}
 	if _, err := proxy.New("global", "", endpoint); err != nil {
 		return err
 	}
@@ -281,7 +288,7 @@ func (s *Service) Test(ctx context.Context, a storage.Account) []Diagnostic {
 	if err != nil {
 		return append(result, Diagnostic{"proxy", false, "代理配置无效"})
 	}
-	result = append(result, Diagnostic{"proxy", true, "代理配置有效；IMAP/SMTP 连接均通过该拨号器"})
+	result = append(result, Diagnostic{"proxy", true, "代理配置格式有效；是否连通请看下方 IMAP/SMTP 测试结果"})
 	credentials, err := s.Credentials(a)
 	if err != nil {
 		return append(result, Diagnostic{"credentials", false, "凭据解密失败"})

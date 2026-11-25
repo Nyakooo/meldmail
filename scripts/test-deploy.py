@@ -13,6 +13,8 @@ FAKE_DOCKER = r'''#!/usr/bin/env python3
 import json,os,sys
 args=sys.argv[1:]
 with open(os.environ['DOCKER_TRACE'],'a') as log: log.write(json.dumps(args)+'\n')
+if args[:1]==['compose'] and '--environment' in args:
+ print('MELDMAIL_HOST_PROXY_PORT='+os.environ.get('TEST_PROXY_PORT',''))
 if args[:2]==['image','ls']:
  print('sha256:project\nsha256:legacy\nsha256:other\nsha256:used')
 elif args[:2]==['image','inspect']:
@@ -30,6 +32,7 @@ class DeployTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
         shutil.copy2(ROOT / 'deploy.sh', self.directory / 'deploy.sh')
+        shutil.copy2(ROOT / 'docker-compose.host-proxy.yml', self.directory / 'docker-compose.host-proxy.yml')
         (self.directory / 'docker-compose.yml').write_text('services: {}\n')
         (self.directory / '.env').write_text('MELDMAIL_MASTER_KEY=fixture\n')
         binary = self.directory / 'bin'
@@ -71,6 +74,21 @@ class DeployTests(unittest.TestCase):
         result, calls = self.run_script(fail='up')
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(call[:1] == ['image'] for call in calls))
+
+    def test_optional_host_proxy_uses_override_for_entire_deployment(self):
+        self.env['TEST_PROXY_PORT'] = '7890'
+        (self.directory / 'docker-compose.override.yml').write_text('services: {}\n')
+        result, calls = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for operation in ('pull', 'up', 'ps'):
+            call = next(call for call in calls if call[0] == 'compose' and operation in call)
+            self.assertEqual(call[3:9], ['-f', 'docker-compose.yml', '-f', 'docker-compose.override.yml', '-f', 'docker-compose.host-proxy.yml'])
+
+    def test_invalid_port_stops_before_pull(self):
+        self.env['TEST_PROXY_PORT'] = '65536'
+        result, calls = self.run_script()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any('pull' in call or 'up' in call for call in calls))
 
     def test_cleanup_only_needs_no_env_or_compose(self):
         (self.directory / '.env').unlink()

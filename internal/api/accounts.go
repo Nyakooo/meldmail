@@ -204,7 +204,7 @@ func (s *Server) getProxy(w http.ResponseWriter, r *http.Request) {
 		storageError(w, err)
 		return
 	}
-	result := map[string]interface{}{"configured": endpoint != "", "url": ""}
+	result := map[string]interface{}{"configured": endpoint != "", "url": "", "managed": s.mail.HostProxyURL != ""}
 	if endpoint != "" {
 		u, err := url.Parse(endpoint)
 		if err != nil {
@@ -218,6 +218,10 @@ func (s *Server) getProxy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 func (s *Server) putProxy(w http.ResponseWriter, r *http.Request) {
+	if s.mail.HostProxyURL != "" {
+		http.Error(w, "共用代理由 .env 管理，请修改 MELDMAIL_HOST_PROXY_PORT 后重新部署。", http.StatusConflict)
+		return
+	}
 	var input struct {
 		URL string `json:"url"`
 	}

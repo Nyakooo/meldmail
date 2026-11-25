@@ -51,15 +51,38 @@ docker compose version >/dev/null
 [ -f docker-compose.yml ] || { printf '缺少 docker-compose.yml，请将脚本放在项目目录中。\n' >&2; exit 1; }
 [ -f .env ] || { printf '请先复制 .env.example 为 .env，并填写主密钥和管理员密码。\n' >&2; exit 1; }
 docker compose --env-file .env config --quiet
+# Ask Compose to parse .env (never source it as shell code).
+compose_environment=$(docker compose --env-file .env config --environment)
+host_proxy_port=$(printf '%s\n' "$compose_environment" | sed -n 's/^MELDMAIL_HOST_PROXY_PORT=//p')
+unset compose_environment
+case "$host_proxy_port" in
+    '') ;;
+    *[!0-9]*) printf 'MELDMAIL_HOST_PROXY_PORT 必须是 1–65535 的端口号。\n' >&2; exit 2 ;;
+    *) if [ "${#host_proxy_port}" -gt 5 ] || [ "$host_proxy_port" -lt 1 ] || [ "$host_proxy_port" -gt 65535 ]; then
+        printf 'MELDMAIL_HOST_PROXY_PORT 必须是 1–65535 的端口号。\n' >&2; exit 2
+       fi ;;
+esac
+compose() {
+    if [ -n "$host_proxy_port" ]; then
+        if [ -f docker-compose.override.yml ]; then
+            docker compose --env-file .env -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.host-proxy.yml "$@"
+        else
+            docker compose --env-file .env -f docker-compose.yml -f docker-compose.host-proxy.yml "$@"
+        fi
+    else
+        docker compose --env-file .env "$@"
+    fi
+}
+compose config --quiet
 
 printf '拉取 MeldMail 镜像…\n'
 # A failed pull exits before any running container is replaced.
-docker compose --env-file .env pull meldmail
+compose pull meldmail
 printf '启动并检查 MeldMail…\n'
-if ! docker compose --env-file .env up --detach --no-build --pull never --wait --wait-timeout 90 meldmail; then
+if ! compose up --detach --no-build --pull never --wait --wait-timeout 90 meldmail; then
     printf '部署未通过健康检查，未清理镜像。请运行 docker compose logs --tail=50 meldmail 排查。\n' >&2
     exit 1
 fi
 cleanup_images
-docker compose --env-file .env ps meldmail
+compose ps meldmail
 printf '部署完成：默认访问 http://127.0.0.1:18085；自定义端口请查看上方映射（MELDMAIL_HTTP_PORT）\n'

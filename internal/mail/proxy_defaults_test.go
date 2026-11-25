@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"testing"
@@ -24,6 +25,9 @@ func TestMailboxDefaultsDirectAndSharedProxyRequiresOptIn(t *testing.T) {
 	}()
 	// An unreachable shared proxy must not interfere with a normal mailbox.
 	if err := service.SetGlobalProxy(ctx, "socks5://127.0.0.1:1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ConfigureHostProxy(ctx, "http://127.0.0.1:1"); err != nil {
 		t.Fatal(err)
 	}
 	account, err := service.Prepare(ctx, AccountInput{Account: storage.Account{Email: "direct@example.com", Provider: "qq"}, Password: "fixture"}, nil)
@@ -91,5 +95,62 @@ func TestSharedProxyEditsOnlyRestartOptedInWorkers(t *testing.T) {
 	}
 	if _, err := service.Dialer(ctx, direct); err != nil {
 		t.Fatal("bad shared proxy blocks direct account", err)
+	}
+}
+
+func TestHostProxyStartupPrecedenceAndRemoval(t *testing.T) {
+	service := transferFixture(t, 11)
+	ctx := context.Background()
+	manual := "socks5://127.0.0.1:1080"
+	if err := service.SetGlobalProxy(ctx, manual); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ConfigureHostProxy(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := service.GlobalProxy(ctx); err != nil || got != manual {
+		t.Fatal("empty env overwrote manual shared proxy", err)
+	}
+	for _, endpoint := range []string{"http://127.0.0.1:7890", "http://127.0.0.1:7891"} {
+		if err := service.ConfigureHostProxy(ctx, endpoint); err != nil {
+			t.Fatal(err)
+		}
+		encrypted, err := service.Store.Setting(ctx, "global_proxy_enc")
+		if err != nil || encrypted == endpoint {
+			t.Fatal("host proxy not encrypted", err)
+		}
+		if err := service.ConfigureHostProxy(ctx, endpoint); err != nil {
+			t.Fatal(err)
+		}
+		unchanged, err := service.Store.Setting(ctx, "global_proxy_enc")
+		if err != nil || unchanged != encrypted {
+			t.Fatal("unchanged env rewrote settings", err)
+		}
+		restarted, err := New(service.Store, bytes.Repeat([]byte{11}, 32))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := restarted.GlobalProxy(ctx); err != nil || got != endpoint {
+			t.Fatal("env not persisted", err)
+		}
+	}
+	if err := service.SetGlobalProxy(ctx, manual); err == nil {
+		t.Fatal("UI overrode environment-owned proxy")
+	}
+	// Simulate an import overwriting the persisted shared proxy. Startup repairs it.
+	if err := service.Store.PutSetting(ctx, "global_proxy_enc", "invalid"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ConfigureHostProxy(ctx, "http://127.0.0.1:7892"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ConfigureHostProxy(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := service.GlobalProxy(ctx); err != nil || got != "" {
+		t.Fatal("removed env left a stale host proxy", err)
+	}
+	if err := service.SetGlobalProxy(ctx, manual); err != nil {
+		t.Fatal("manual settings still locked", err)
 	}
 }

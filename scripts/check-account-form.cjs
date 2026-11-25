@@ -46,7 +46,7 @@ const server=createServer(async(req,res)=>{
  try {
   const page=await browser.newPage();page.setDefaultTimeout(4000);
   await page.goto(`http://127.0.0.1:${server.address().port}`);
-  await page.getByRole('button',{name:'⚙ 邮箱与连接',exact:true}).click();const panel=page.getByRole('dialog',{name:'邮箱与连接',exact:true});
+  await page.getByRole('button',{name:'邮箱与连接',exact:true}).click();const panel=page.getByRole('dialog',{name:'邮箱与连接',exact:true});
   await panel.getByRole('combobox',{name:/服务商/}).selectOption('qq');
   await panel.getByLabel('邮箱地址',{exact:true}).fill('fixture@qq.com');await panel.getByLabel('密码或应用授权码',{exact:true}).fill('fixture-authorization');
   await panel.getByRole('button',{name:'保存邮箱',exact:true}).click();await panel.getByRole('heading',{name:'编辑邮箱',exact:true}).waitFor();

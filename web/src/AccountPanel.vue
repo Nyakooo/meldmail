@@ -19,6 +19,7 @@ const notice = ref('')
 const diagnostics = ref<Diagnostic[]>([])
 const proxy = ref('')
 const currentProxy = ref('')
+const proxyManaged = ref(false)
 const accountBody = ref<HTMLElement | null>(null)
 const proxyLoading = ref(false)
 let proxyRequest: AbortController | undefined
@@ -90,7 +91,7 @@ async function remove(account: Account) {
  await action(async () => { await request<void>(`/api/accounts/${account.id}`, { method: 'DELETE' }); if (editing.value === account.id) reset(); emit('changed') })
 }
 async function refreshProxy() {
- try { currentProxy.value = (await request<{ url: string }>('/api/settings/proxy')).url }
+ try { const data = await request<{ url: string; managed: boolean }>('/api/settings/proxy'); currentProxy.value = data.url; proxyManaged.value = data.managed }
  catch (err) { error.value = errorMessage(err) }
 }
 function importedConfig() { emit('changed'); void refreshProxy() }
@@ -119,9 +120,9 @@ onMounted(() => { if (props.initialAccountId) { const account = props.accounts.f
     <form v-else-if="section === 'proxy'" class="proxy-settings global-proxy-panel" @submit.prevent="saveProxy"><div class="modal-scroll">
      <h3>{{ t('共用代理') }}</h3><p class="field-hint">{{ t('仅影响主动选择“使用共用代理”的邮箱；其他邮箱按各自的连接方式连接。') }}</p>
      <p class="connection-status-detail">{{ t('当前共用代理：') }}{{ currentProxy || t('未设置') }}</p>
-     <label>{{ t('共用代理 URL') }}<input v-model="proxy" :disabled="busy || proxyLoading" type="text" inputmode="url" autocapitalize="none" :spellcheck="false" autocomplete="off" :placeholder="t('留空可清除共用代理')"></label>
-     <p class="field-hint">{{ t('填写后，可让需要代理的邮箱主动选择复用。清空后，选择共用代理的邮箱将恢复直连。') }}</p>
-     </div><div class="form-actions"><button class="primary" :disabled="busy || proxyLoading">{{ t('保存共用代理') }}</button></div>
+     <label>{{ t('共用代理 URL') }}<input v-model="proxy" :readonly="proxyManaged" :disabled="busy || proxyLoading" type="text" inputmode="url" autocapitalize="none" :spellcheck="false" autocomplete="off" :placeholder="t('留空可清除共用代理')"></label>
+     <p v-if="proxyManaged" class="field-hint">{{ t('共用代理由 .env 管理，请修改 MELDMAIL_HOST_PROXY_PORT 后重新部署。') }}</p><p v-else class="field-hint">{{ t('填写后，可让需要代理的邮箱主动选择复用。清空后，选择共用代理的邮箱将恢复直连。') }}</p>
+     </div><div class="form-actions"><button v-if="!proxyManaged" class="primary" :disabled="busy || proxyLoading">{{ t('保存共用代理') }}</button></div>
     </form><form v-else class="account-form" @submit.prevent="save"><div ref="accountBody" class="modal-scroll account-form-body">
      <p v-if="editing && accounts.find(account => account.id === editing)?.status === 'error'" class="connection-status-detail" role="status">{{ t("连接暂不可用") }} · {{ t(accounts.find(account => account.id === editing)?.last_error || '请测试连接并检查网络或授权码') }}</p>
      <h3>{{ editing === null ? t('连接新邮箱') : t('编辑邮箱') }}</h3>
