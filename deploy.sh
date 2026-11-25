@@ -62,4 +62,4 @@ if ! docker compose --env-file .env up --detach --no-build --pull never --wait -
 fi
 cleanup_images
 docker compose --env-file .env ps meldmail
-printf '部署完成：HTTP 服务默认位于 http://127.0.0.1:8080\n'
+printf '部署完成：默认访问 http://127.0.0.1:18085；自定义端口请查看上方映射（MELDMAIL_HTTP_PORT）\n'

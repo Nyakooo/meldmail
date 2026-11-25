@@ -17,7 +17,7 @@
   - **通信**：REST API + SSE（`/api/events`）+ MCP（Streamable HTTP `/mcp`）。
 - **部署红线**：
   - **单 Docker 容器**：仅 1 个容器，通过 `docker-compose.yml` 部署与升级。
-  - **纯 HTTP 监听**：容器内仅监听 HTTP（默认 `:8080`），宿主机绑定 `127.0.0.1:8080`，由用户宿主机 Nginx + Certbot 终结 HTTPS。
+  - **纯 HTTP 监听**：容器内仅监听 HTTP（默认 `:8080`），宿主机默认绑定 `127.0.0.1:18085`（通过 `MELDMAIL_HTTP_PORT` 自定义），由用户宿主机 Nginx + Certbot 终结 HTTPS。
 - **资源红线（2C2G 宿主机共享环境）**：
   - Docker 容器硬限制：`mem_limit: 256m`，`cpus: 0.5`。
   - Go 运行时强制环境变量：`GOMEMLIMIT=200MiB`，`GOGC=50`。
@@ -270,7 +270,7 @@ services:
     container_name: meldmail
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${MELDMAIL_HTTP_PORT:-18085}:8080"
     volumes:
       - ./data:/data
     environment:
@@ -289,7 +289,7 @@ services:
 ```
 
 ### 6.2 宿主机 Nginx 反代要求（写入 `README.md`）
-- `/` 常规反代至 `http://127.0.0.1:8080`，透传 `Host`、`X-Real-IP`、`X-Forwarded-For`、`X-Forwarded-Proto`。
+- `/` 常规反代至 `http://127.0.0.1:18085`，透传 `Host`、`X-Real-IP`、`X-Forwarded-For`、`X-Forwarded-Proto`。
 - `/api/events` 与 `/mcp` 必须配置 `proxy_http_version 1.1`、`proxy_set_header Connection ""`、`proxy_buffering off`、`proxy_cache off`、`proxy_read_timeout 86400s`。
 
 ---
@@ -300,7 +300,7 @@ Codex 必须严格按顺序实现，每阶段提供可复现的测试命令并�
 
 | 阶段 | 核心交付物 | 阶段性验收标准（Definition of Done） |
 | :--- | :--- | :--- |
-| **M0：工程底座** | Go + Vue 3 目录初始化、`001_init.sql`、SQLite 封装、AES-256-GCM 加解密、登录鉴权、`Dockerfile`、`docker-compose.yml`。 | 1. `docker compose up --build` 成功启动单容器。<br>2. SQLite `PRAGMA journal_mode` 为 `wal`。<br>3. 访问 `http://127.0.0.1:8080` 返回 Vue 页面，空闲内存 < 30MB。<br>4. `go test ./...` 通过。 |
+| **M0：工程底座** | Go + Vue 3 目录初始化、`001_init.sql`、SQLite 封装、AES-256-GCM 加解密、登录鉴权、`Dockerfile`、`docker-compose.yml`。 | 1. `docker compose up --build` 成功启动单容器。<br>2. SQLite `PRAGMA journal_mode` 为 `wal`。<br>3. 访问 `http://127.0.0.1:18085` 返回 Vue 页面，空闲内存 < 30MB。<br>4. `go test ./...` 通过。 |
 | **M1：代理与首封同步** | `ProxyDialer`（含单元测试）、163 `IMAP ID` 与主流邮箱预设、账号 CRUD + 连接测试 API、手动触发增量同步。 | 1. `ProxyDialer` 单元测试覆盖 Direct/HTTP/SOCKS5。<br>2. `/api/accounts/test` 诊断逻辑完整。<br>3. 同步后 `emails` 表写入元数据与 ≤500 字 `snippet`，`credentials_enc` 为密文。 |
 | **M2：统一收件箱与搜索** | 统一列表 API、FTS5 `trigram` 搜索、前端响应式三栏/移动端列表与账号筛选界面。 | 1. 多账号邮件混合按时间倒序展示，支持账号/未读筛选。<br>2. FTS5 单元测试验证中文、英文、6 位数字验证码模糊搜索耗时 < 50ms。 |
 | **M3：后台实时同步与 SSE** | 后台 Worker（IDLE + QQ Re-IDLE + 45min 校验 + 指数退避 + 并发信号量 3）与 SSE Broker 推送。 | 1. 浏览器关闭状态下后台持续同步新邮件。<br>2. 前端接入 `/api/events` 自动无刷新插入新邮件。<br>3. 模拟断网恢复后 Worker 自动重连，无 Goroutine 泄漏。 |

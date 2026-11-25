@@ -5,7 +5,7 @@ services:
     container_name: meldmail
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${MELDMAIL_HTTP_PORT:-18085}:8080"
     volumes:
       - ./data:/data
     environment:

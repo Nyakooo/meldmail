@@ -60,7 +60,7 @@ go run ./cmd/meldmail
 
 Set `MELDMAIL_MASTER_KEY` to a random 32-byte key encoded as 64 hexadecimal characters (`openssl rand -hex 32`). Set `MELDMAIL_ADMIN_PASSWORD` on first startup; only its bcrypt hash is stored, and subsequent starts do not overwrite it. Passwords must fit bcrypt's 72-byte limit. Keep the master key securely backed up. Sessions expire after 24 hours and are revoked on restart.
 
-For Docker, copy `.env.example` to `.env`, set a strong password and master key, then run `docker compose up --build -d`. The service binds to `127.0.0.1:8080`, stores SQLite metadata and opened-body caches under `./data`, and runs with a 256MB / 0.5 CPU limit. Do not commit `.env` or `data`. Only trust proxy headers when access is restricted to your reverse proxy.
+For Docker, copy `.env.example` to `.env`, set a strong password and master key, then run `docker compose up --build -d`. The service binds to `127.0.0.1:18085`, stores SQLite metadata and opened-body caches under `./data`, and runs with a 256MB / 0.5 CPU limit. Do not commit `.env` or `data`. Only trust proxy headers when access is restricted to your reverse proxy.
 
 The responsive mail client, background synchronization and controlled MCP access are implemented. See [acceptance evidence](docs/ACCEPTANCE.md) for the final test scope and measured resource use.
 
@@ -169,9 +169,11 @@ To select a particular release, set `MELDMAIL_IMAGE=ghcr.io/nyakooo/meldmail:sha
 
 Pushes to `master` publish `latest` and a full commit SHA tag through [Publish GHCR image](https://github.com/Nyakooo/meldmail/actions/workflows/ghcr.yml). Version tags matching `v*` publish the matching image tag. Images support Linux amd64 and arm64. Wait for the workflow to finish successfully before running the server deployment script.
 
+The default host port is `18085`. Set `MELDMAIL_HTTP_PORT=54321` in `.env` to use another port, then rerun `./deploy.sh`; update your Nginx `proxy_pass` to the same port. The container continues listening on port `8080`.
+
 For a local source build, use `docker compose up --build -d`.
 
-The deployment consists of one container. The host endpoint is `http://127.0.0.1:8080`; only the host reverse proxy should expose it. Compose sets both Docker's `mem_limit: 256m` / `cpus: 0.5` and deployment resource limits, with `GOMEMLIMIT=200MiB` and `GOGC=50`. SQLite uses WAL, a 16MiB page cache and in-memory temporary storage. The master key is required at every startup; changing it makes existing encrypted account credentials unreadable.
+The deployment consists of one container. The host endpoint is `http://127.0.0.1:18085`; only the host reverse proxy should expose it. Compose sets both Docker's `mem_limit: 256m` / `cpus: 0.5` and deployment resource limits, with `GOMEMLIMIT=200MiB` and `GOGC=50`. SQLite uses WAL, a 16MiB page cache and in-memory temporary storage. The master key is required at every startup; changing it makes existing encrypted account credentials unreadable.
 
 ### Host Nginx and Certbot
 
@@ -194,7 +196,7 @@ server {
 
     # SSE and MCP must pass through without buffering or caching.
     location ~ ^/(api/events|mcp)$ {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:18085;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;
@@ -208,7 +210,7 @@ server {
     }
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:18085;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
