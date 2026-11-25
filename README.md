@@ -292,3 +292,11 @@ The favicon uses the current approved mark, with a versioned URL to replace prev
 ### Appearance
 
 The workspace follows `docs/DESIGN.md`: a compact blue three-column desktop layout and mobile bottom navigation. Choose Light, Dark or System from the toolbar (also available on the login screen); explicit choices are retained in this browser. The inbox status line shows mail counts, memory and disk usage; CPU is available only through the diagnostics API.
+
+### Simplified categories and reading feedback
+
+Unread is an independent category across accounts and folders (excluding Trash); it no longer inherits the previous folder. There is no additional unread checkbox. The toolbar uses a one-click Light/Dark button and an EN/中文 switch; both choices persist in this browser. HTML message colors follow the selected theme while the existing sanitizer, sandbox and remote-image blocking remain active.
+
+Reading shows whether the body was saved or loaded locally. A queued archive/delete remains visible in its destination category with a pending marker until the provider UID is confirmed; no message is represented as permanently deleted or successfully moved before confirmation. Standard fixture move flows are verified; a provider returning an unusable destination UID can remain pending for recovery.
+
+Saving an account closes settings, clears stale search/category filters, selects that account and shows synchronization status. A failed save keeps the form open with entered values intact. Saving configuration does not prove connectivity: test results distinguish TLS/network failure from password authentication. Gmail app passwords are accepted; default proxy mode with no configured endpoint connects directly.

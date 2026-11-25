@@ -62,3 +62,19 @@ The user authorized sanitized body persistence after the original M0–M6 metada
 - Removed CPU from the inbox UI and condensed mail counts/memory/disk into a status line. CPU diagnostics remain available through the existing authenticated API.
 - Mobile uses bottom navigation, account filtering and a compose action above the safe area.
 - `npm run build --prefix web` and the updated targeted Chrome acceptance: PASS. Browser checks cover saved dark theme after reload, light switching, no visible CPU card, mobile navigation/account panel, no horizontal overflow and existing pagination/SSE behavior affected by the layout.
+
+## 2026-11-24 interaction and reference-design correction
+
+- Reproduced the unread bug with the targeted Chrome fixture: Archive → Unread returned zero instead of 60 messages. Unread now selects its own all-mail query and the extra checkbox is removed.
+- Real local read-only inspection found five cached bodies. Added saved/local-read feedback; Chrome proves first-save and second-local-read, dark iframe body colors and safe HTML without tracker requests.
+- Pending move rows are now included in destination categories with effective folder role and `pending_action`, using the same filters/count/cursor order. The storage regression checks both pending delete and archive, plus rollback. A real QQ acknowledged move still has an unresolved destination UID; this is surfaced as pending, not claimed as completed.
+- Reference-aligned density, icon controls, one-click theme switching, bottom resource status and persisted Chinese/English switching. No dummy sent/drafts/spam modules were added.
+- Browser checks failed-save value retention, successful-save modal closure/account selection/search reset, unread categories, pagination/SSE, language/theme persistence and mobile account access.
+
+## 2026-11-25 final interaction follow-up
+
+The updated end-to-end mail test caught a layout-induced lost click after sending: the Reply/Forward buttons scrolled with the message while the sent banner changed the available viewport. The composer never opened. Pinning the reader header and action footer while scrolling only the message fixes the actual click path; no artificial delay or wider timeout was added. Temporary instrumentation was removed. The same compose → reply → forward → archive → trash browser path now passes.
+
+Final validation: `go test -race ./...` PASS (API including Chrome flows: 89.902s), `go vet ./...` PASS and `npm run build --prefix web` PASS. Previously successful unchanged packages used the Go test cache.
+
+The production container was recreated with its existing key and data volume. Served frontend bytes match the final build; administrator password, 2 accounts, 13 metadata rows and 5 body caches were retained. The actual pending QQ deletion is now returned by the Trash query. Gmail already has 3 locally synchronized messages; the earlier TLS screenshot is not evidence that its current password is invalid.

@@ -68,4 +68,26 @@ func TestDurableOptimisticFlagAction(t *testing.T) {
 	if err != nil || len(page.Emails) != 1 {
 		t.Fatal("rollback did not restore inbox", err)
 	}
+	// Moving messages must remain visible in their destination even before IMAP confirmation.
+	for _, change := range []FlagChange{{Delete: true}, {Archive: true}} {
+		if _, err := reopened.QueueFlags(ctx, email.ID, change); err != nil {
+			t.Fatal(err)
+		}
+		target := "archive"
+		if change.Delete {
+			target = "trash"
+		}
+		page, err := reopened.ListEmails(ctx, EmailQuery{Folder: target})
+		if err != nil || page.Total != 1 || len(page.Emails) != 1 || page.Emails[0].PendingAction == "" || page.Emails[0].FolderRole != target {
+			t.Fatal("pending move disappeared from destination", err, page)
+		}
+		actions, err := reopened.FlagActions(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := reopened.FinishFlagAction(ctx, actions[0], nil, 0, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 }

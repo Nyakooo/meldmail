@@ -13,6 +13,7 @@ type Folder struct {
 	UIDValidity, LastUID uint32
 }
 type Email struct {
+	PendingAction  string `json:"pending_action,omitempty"`
 	ID             int64  `json:"id"`
 	FolderRole     string `json:"folder_role"`
 	AccountID      int64  `json:"account_id"`

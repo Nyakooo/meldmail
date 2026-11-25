@@ -28,9 +28,10 @@ type emailCursor struct{ Date, ID int64 }
 
 const emailColumns = `e.id,e.account_id,e.folder_id,e.uid,e.message_id,e.in_reply_to,e.subject,e.from_name,e.from_addr,e.to_addrs,e.cc_addrs,e.snippet,e.has_attachments,e.is_read,e.is_starred,e.date,e.created_at,f.role`
 
-func scanEmail(row scanner) (Email, error) {
+func scanEmail(row scanner, extra ...interface{}) (Email, error) {
 	var e Email
-	err := row.Scan(&e.ID, &e.AccountID, &e.FolderID, &e.UID, &e.MessageID, &e.InReplyTo, &e.Subject, &e.FromName, &e.FromAddr, &e.ToAddrs, &e.CCAddrs, &e.Snippet, &e.HasAttachments, &e.IsRead, &e.IsStarred, &e.Date, &e.CreatedAt, &e.FolderRole)
+	fields := []interface{}{&e.ID, &e.AccountID, &e.FolderID, &e.UID, &e.MessageID, &e.InReplyTo, &e.Subject, &e.FromName, &e.FromAddr, &e.ToAddrs, &e.CCAddrs, &e.Snippet, &e.HasAttachments, &e.IsRead, &e.IsStarred, &e.Date, &e.CreatedAt, &e.FolderRole}
+	err := row.Scan(append(fields, extra...)...)
 	if err != nil {
 		return e, fmt.Errorf("storage email: %w", err)
 	}
@@ -44,7 +45,12 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 	if q.Limit < 1 || q.Limit > 100 || q.AccountID < 0 || utf8.RuneCountInString(q.Q) > 256 || len(q.Cursor) > 256 {
 		return page, ErrInvalidQuery
 	}
-	clauses := []string{"NOT " + pendingRemovalSQL("e.id", false)}
+	deleted := pendingRemovalSQL("e.id", false)
+	archived := pendingRemovalSQL("e.id", true)
+	clauses := []string{"1=1"}
+	if q.Folder != "trash" {
+		clauses = append(clauses, "NOT "+deleted)
+	}
 	args := make([]interface{}, 0)
 	if q.AccountID > 0 {
 		clauses = append(clauses, "e.account_id=?")
@@ -59,7 +65,14 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 	if q.Folder == "inbox" {
 		clauses = append(clauses, "NOT "+pendingRemovalSQL("e.id", true))
 	}
-	if q.Folder != "all" {
+	if q.Folder == "trash" || q.Folder == "archive" {
+		pending := deleted
+		if q.Folder == "archive" {
+			pending = archived
+		}
+		clauses = append(clauses, "(f.role=? OR f.name=? OR "+pending+")")
+		args = append(args, q.Folder, q.Folder)
+	} else if q.Folder != "all" {
 		clauses = append(clauses, "(f.role=? OR f.name=?)")
 		args = append(args, q.Folder, q.Folder)
 	}
@@ -94,7 +107,8 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 		args = append(args, cursor.Date, cursor.Date, cursor.ID)
 	}
 	args = append(args, q.Limit+1)
-	rows, err := s.DB.QueryContext(ctx, "SELECT "+emailColumns+" FROM emails e JOIN folders f ON f.id=e.folder_id WHERE "+strings.Join(clauses, " AND ")+" ORDER BY e.date DESC,e.id DESC LIMIT ?", args...)
+	columns := strings.TrimSuffix(emailColumns, "f.role") + "CASE WHEN " + deleted + " THEN 'trash' WHEN " + archived + " THEN 'archive' ELSE f.role END,CASE WHEN " + deleted + " THEN 'delete' WHEN " + archived + " THEN 'archive' ELSE '' END"
+	rows, err := s.DB.QueryContext(ctx, "SELECT "+columns+" FROM emails e JOIN folders f ON f.id=e.folder_id WHERE "+strings.Join(clauses, " AND ")+" ORDER BY e.date DESC,e.id DESC LIMIT ?", args...)
 	if err != nil {
 		return page, fmt.Errorf("storage list emails: %w", err)
 	}
@@ -104,7 +118,9 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 		}
 	}()
 	for rows.Next() {
-		e, err := scanEmail(rows)
+		var pending string
+		e, err := scanEmail(rows, &pending)
+		e.PendingAction = pending
 		if err != nil {
 			return page, err
 		}

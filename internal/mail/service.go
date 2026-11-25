@@ -301,7 +301,7 @@ func diagnose(err error) string {
 	case strings.Contains(text, "proxy"):
 		return "代理连接或 CONNECT/SOCKS5 握手失败"
 	case strings.Contains(text, "tls") || strings.Contains(text, "certificate"):
-		return "TLS 握手或证书校验失败"
+		return "TLS 连接或证书校验失败，尚未验证授权码；请检查网络与代理"
 	case strings.Contains(text, "authentication") || strings.Contains(text, "login"):
 		return "认证失败，请检查授权码或 OAuth2 配置"
 	case strings.Contains(text, "provider id"):

@@ -240,7 +240,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 - `POST /api/auth/login` / `POST /api/auth/logout` / `GET /api/auth/me`
 - `GET/POST/PUT/DELETE /api/accounts` 及 `POST /api/accounts/test`（测试代理 + IMAP/SMTP 连通性，返回清晰诊断信息）
 - `GET/PUT /api/settings/proxy`（全局默认代理配置）
-- `GET /api/emails?account_id=&folder=&unread=&q=&cursor=&limit=50`（统一收件箱列表 + FTS5 检索；返回 `emails`、`next_cursor` 和不随游标缩小的筛选总数 `total`；前端使用前后翻页的游标历史）
+- `GET /api/emails?account_id=&folder=&unread=&q=&cursor=&limit=50`（统一收件箱列表 + FTS5 检索；返回 `emails`、`next_cursor` 和不随游标缩小的筛选总数 `total`；前端使用前后翻页的游标历史；待确认的归档/删除在目标类目中返回有效 `folder_role` 和 `pending_action`，在确认前保留原始来源定位用于恢复）
 - `GET /api/emails/:id`（优先返回本地正文；未命中则拉取、清洗并保存，含附件元信息与 `cached` / `local` 状态）
 - `GET /api/emails/:id/attachments/:part_id`（流式下载附件）
 - `PATCH /api/emails/:id/flags`（已读/未读/星标/归档/删除：先更新本地 DB 并推送 SSE，再异步同步 IMAP）
