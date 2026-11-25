@@ -1,7 +1,7 @@
 services:
   meldmail:
     build: .
-    image: ghcr.io/nyakooo/meldmail:latest
+    image: ${MELDMAIL_IMAGE:-ghcr.io/nyakooo/meldmail:latest}
     container_name: meldmail
     restart: unless-stopped
     ports:
@@ -16,6 +16,12 @@ services:
       - MELDMAIL_TRUST_PROXY=true
       - GOMEMLIMIT=200MiB
       - GOGC=50
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
     mem_limit: 256m
     cpus: 0.5
     deploy:

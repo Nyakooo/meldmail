@@ -159,9 +159,17 @@ These tests discover and call all nine tools through the official SDK, verify pe
 Copy `.env.example` to `.env` and fill in `MELDMAIL_MASTER_KEY` (generate with `openssl rand -hex 32`) and a strong `MELDMAIL_ADMIN_PASSWORD`. Restrict the file with `chmod 600 .env`. Then:
 
 ```sh
-docker compose up --build -d
+./deploy.sh
 docker compose logs --tail=50 meldmail
 ```
+
+`deploy.sh` pulls `ghcr.io/nyakooo/meldmail:latest`, starts the service without building on the server, waits up to 90 seconds for its HTTP health check, and removes only unused dangling MeldMail images. A failed pull leaves the running service in place; a failed health check exits without cleaning images. Existing `.env` and `data/` are preserved. Run the script from an updated repository checkout; it also honors your local Compose override file. Docker Compose v2.20+ is required. If GHCR access is private, run `docker login ghcr.io` with a token that has package read access first.
+
+To select a particular release, set `MELDMAIL_IMAGE=ghcr.io/nyakooo/meldmail:sha-<full-commit-sha>` (or a digest) in `.env` and run `./deploy.sh`. To clean only this project's dangling images without deploying, run `./deploy.sh --cleanup-only`. Images referenced by existing containers, other projects' images, and build caches are retained.
+
+Pushes to `master` publish `latest` and a full commit SHA tag through [Publish GHCR image](https://github.com/Nyakooo/meldmail/actions/workflows/ghcr.yml). Version tags matching `v*` publish the matching image tag. Images support Linux amd64 and arm64. Wait for the workflow to finish successfully before running the server deployment script.
+
+For a local source build, use `docker compose up --build -d`.
 
 The deployment consists of one container. The host endpoint is `http://127.0.0.1:8080`; only the host reverse proxy should expose it. Compose sets both Docker's `mem_limit: 256m` / `cpus: 0.5` and deployment resource limits, with `GOMEMLIMIT=200MiB` and `GOGC=50`. SQLite uses WAL, a 16MiB page cache and in-memory temporary storage. The master key is required at every startup; changing it makes existing encrypted account credentials unreadable.
 
