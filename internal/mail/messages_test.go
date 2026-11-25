@@ -240,6 +240,41 @@ func TestReadSanitizeAndDecodeAttachment(t *testing.T) {
 	if err != nil || folder.Role != "trash" {
 		t.Fatal("trash destination not stored", err)
 	}
+
+	if _, err := service.ChangeFlags(ctx, e.ID, storage.FlagChange{Restore: true}); err != nil {
+		t.Fatal(err)
+	}
+	trash, err := store.ListEmails(ctx, storage.EmailQuery{Folder: "trash"})
+	if err != nil || trash.Total != 0 {
+		t.Fatal("pending restore still visible in trash", err)
+	}
+	restoredInbox, err := store.ListEmails(ctx, storage.EmailQuery{Folder: "inbox"})
+	foundRestore := false
+	for _, item := range restoredInbox.Emails {
+		if item.ID == e.ID && item.FolderRole == "inbox" && item.PendingAction == "restore" {
+			foundRestore = true
+		}
+	}
+	if err != nil || !foundRestore {
+		t.Fatal("pending restore missing from inbox", err)
+	}
+	if err := service.ProcessFlagActions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := store.Email(ctx, e.ID)
+	if err != nil || restored.FolderRole != "inbox" || restored.UID == 0 {
+		t.Fatal("restore destination not stored", err)
+	}
+	actions, err := store.FlagActions(ctx)
+	if err != nil || len(actions) != 0 {
+		t.Fatal("restore not confirmed", err)
+	}
+	if _, err := service.Read(ctx, e.ID); err != nil {
+		t.Fatal("restored email unreadable", err)
+	}
+	if _, err := service.ChangeFlags(ctx, e.ID, storage.FlagChange{Restore: true}); !errors.Is(err, storage.ErrInvalidQuery) {
+		t.Fatal("restore outside trash/archive accepted", err)
+	}
 	// The on-demand body never becomes searchable or persisted.
 	persisted, err := store.Email(ctx, e.ID)
 	if err != nil {

@@ -3,8 +3,6 @@ package imapclient
 import (
 	"context"
 	"fmt"
-	upstream "github.com/emersion/go-imap/v2/imapclient"
-	"io"
 	"strings"
 
 	"github.com/emersion/go-imap/v2"
@@ -38,7 +36,7 @@ func (c *Client) ApplyFlags(ctx context.Context, a storage.Account, action stora
 			return nil, fmt.Errorf("imap store flags: %w", err)
 		}
 	}
-	if !action.Change.Archive && !action.Change.Delete {
+	if !action.Change.Archive && !action.Change.Delete && !action.Change.Restore {
 		return nil, nil
 	}
 	role := "archive"
@@ -54,6 +52,12 @@ func (c *Client) ApplyFlags(ctx context.Context, a storage.Account, action stora
 		fallback = ""
 	}
 	target := ""
+	if action.Change.Restore {
+		role = "inbox"
+		fallback = "INBOX"
+		special = ""
+		target = "INBOX"
+	}
 	command := c.IMAP.List("", "*", nil)
 	for mailbox := command.Next(); mailbox != nil; mailbox = command.Next() {
 		for _, attribute := range mailbox.Attrs {
@@ -111,6 +115,19 @@ func (c *Client) ApplyFlags(ctx context.Context, a storage.Account, action stora
 	if set, ok := moved.DestUIDs.(imap.UIDSet); ok && len(set) == 1 && set[0].Start == set[0].Stop && moved.UIDValidity == selected.UIDValidity {
 		uid = uint32(set[0].Start)
 	}
+
+	if uid == 0 {
+		if set, ok := moved.DestUIDs.(imap.UIDSet); ok && len(set) == 1 && set[0].Start == set[0].Stop {
+			candidate := uint32(set[0].Start)
+			matches, err := c.matchesMessageID(candidate, action.MessageID)
+			if err != nil {
+				return nil, err
+			}
+			if matches {
+				uid = candidate
+			}
+		}
+	}
 	if uid == 0 && action.MessageID != "" {
 		found, err := c.IMAP.UIDSearch(&imap.SearchCriteria{Header: []imap.SearchCriteriaHeaderField{{Key: "Message-ID", Value: strings.Trim(action.MessageID, "<>")}}}, nil).Wait()
 		if err != nil {
@@ -147,8 +164,16 @@ func (c *Client) RecoverMove(ctx context.Context, action storage.FlagAction) (*M
 		return nil, fmt.Errorf("imap recover destination: %w", err)
 	}
 	uid := action.DestinationUID
-	if action.DestinationValidity != 0 && selected.UIDValidity != action.DestinationValidity {
-		uid = 0
+	if uid != 0 && action.DestinationValidity != 0 && selected.UIDValidity != action.DestinationValidity {
+		// A provider may put the source UIDVALIDITY in COPYUID. Never trust the
+		// destination UID across that mismatch without verifying message identity.
+		matches, err := c.matchesMessageID(uid, action.MessageID)
+		if err != nil {
+			return nil, err
+		}
+		if !matches {
+			uid = 0
+		}
 	}
 	if uid != 0 {
 		found, err := c.hasUID(uid)
@@ -174,24 +199,31 @@ func (c *Client) RecoverMove(ctx context.Context, action storage.FlagAction) (*M
 	return &MoveResult{Name: action.DestinationName, Role: action.DestinationRole, UIDValidity: selected.UIDValidity, UID: uid}, nil
 }
 func (c *Client) hasUID(uid uint32) (bool, error) {
-	command := c.IMAP.Fetch(imap.UIDSetNum(imap.UID(uid)), &imap.FetchOptions{UID: true})
-	found := false
-	for msg := command.Next(); msg != nil; msg = command.Next() {
-		for item := msg.Next(); item != nil; item = msg.Next() {
-			switch v := item.(type) {
-			case upstream.FetchItemDataUID:
-				found = uint32(v.UID) == uid
-			case upstream.FetchItemDataBodySection:
-				if v.Literal != nil {
-					if _, err := io.Copy(io.Discard, v.Literal); err != nil {
-						return false, c.abortFetch(command, err)
-					}
-				}
-			}
-		}
-	}
-	if err := command.Close(); err != nil {
+	// SEARCH handles an absent UID without provoking empty FETCH responses
+	// emitted by some providers after a successful MOVE.
+	data, err := c.IMAP.UIDSearch(&imap.SearchCriteria{UID: []imap.UIDSet{imap.UIDSetNum(imap.UID(uid))}}, nil).Wait()
+	if err != nil {
 		return false, fmt.Errorf("imap verify UID: %w", err)
 	}
-	return found, nil
+	for _, found := range data.AllUIDs() {
+		if uint32(found) == uid {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (c *Client) matchesMessageID(uid uint32, messageID string) (bool, error) {
+	expected := strings.Trim(strings.TrimSpace(messageID), "<>")
+	if expected == "" {
+		return false, nil
+	}
+	messages, err := c.IMAP.Fetch(imap.UIDSetNum(imap.UID(uid)), &imap.FetchOptions{UID: true, Envelope: true}).Collect()
+	if err != nil {
+		return false, fmt.Errorf("imap verify moved identity: %w", err)
+	}
+	if len(messages) != 1 || uint32(messages[0].UID) != uid || messages[0].Envelope == nil {
+		return false, nil
+	}
+	return strings.Trim(strings.TrimSpace(messages[0].Envelope.MessageID), "<>") == expected, nil
 }

@@ -121,7 +121,7 @@ function matches(email: Email): boolean {
  return !text || [email.subject, email.from_name, email.from_addr, email.snippet].some(value => value.toLowerCase().includes(text))
 }
 function applyFlags(update: EmailUpdate) {
- if (update.deleted || update.archived) {
+ if (update.deleted || update.archived || update.restored) {
   if (update.pending === false && update.folder_role && typeof update.subject === 'string') {
    const moved = { ...update, pending_action: '' } as Email
    emails.value = emails.value.filter(email => email.id !== moved.id)
@@ -129,7 +129,7 @@ function applyFlags(update: EmailUpdate) {
    if (selected.value?.id === moved.id) { if (matches(moved)) Object.assign(selected.value, moved); else selected.value = null }
    return
   }
-  if (update.deleted || folder.value === 'inbox') { emails.value = emails.value.filter(email => email.id !== update.id); if (selected.value?.id === update.id) selected.value = null; return }
+  if (update.deleted || update.restored || folder.value === 'inbox') { emails.value = emails.value.filter(email => email.id !== update.id); if (selected.value?.id === update.id) selected.value = null; return }
  }
  const existing = emails.value.find(email => email.id === update.id)
  if (existing) { Object.assign(existing, update); if (!matches(existing)) emails.value = emails.value.filter(email => email.id !== update.id) }
@@ -166,18 +166,17 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
 <template>
  <div class="workspace">
   <aside class="sidebar" :class="{ open: sidebarOpen }">
-   <a class="brand" href="/" :aria-label="t('MeldMail 首页')"><img class="brand-icon" src="/meldmail-mark.svg" alt="">MeldMail</a>
    <button class="primary compose-button" :disabled="!accounts.length" @click="compose()">{{ t("＋ 撰写邮件") }}</button>
    <p class="eyebrow sidebar-caption">{{ t("邮件") }}</p>
    <nav :aria-label="t('邮件文件夹')"><button :class="{ active: folder === 'inbox' && !unread }" @click="folder = 'inbox'; unread = false; filter()"><Icon name="mail" />{{ t("统一收件箱") }}</button><button :class="{ active: unread }" @click="folder = 'all'; unread = true; filter()"><Icon name="unread" />{{ t("未读邮件") }}</button><button :class="{ active: folder === 'all' && !unread }" @click="folder = 'all'; unread = false; filter()"><Icon name="all" />{{ t("全部邮件") }}</button><button :class="{ active: folder === 'archive' }" @click="folder = 'archive'; unread = false; filter()"><Icon name="archive" />{{ t("已归档") }}</button><button :class="{ active: folder === 'trash' }" @click="folder = 'trash'; unread = false; filter()"><Icon name="trash" />{{ t("废纸篓") }}</button></nav>
    <div class="account-heading"><p class="eyebrow">{{ t("已连接邮箱") }}</p><button class="icon-button" :aria-label="t('添加邮箱')" @click="settings = true">＋</button></div>
    <button class="account-link" :class="{ active: accountId === 0 }" @click="accountId = 0; filter()"><span class="account-dot all-dot"></span>{{ t("所有邮箱") }}<span class="account-count">{{ stats?.mail.total ?? '—' }}</span></button>
    <button v-for="(account, index) in accounts" :key="account.id" class="account-link" :class="{ active: accountId === account.id }" @click="accountId = account.id; filter()"><span class="account-dot" :style="{ background: ['#397867', '#c89349', '#6579aa', '#ad6b89'][index % 4] }"></span><span class="truncate">{{ account.display_name || account.email }}</span><span class="account-count">{{ accountCount(account.id) ?? '—' }}</span><span v-if="account.status === 'error'" :title="t('连接失败')">!</span><span v-else-if="account.status === 'paused'" :title="t('已暂停')">Ⅱ</span></button>
-   <div class="sidebar-footer"><small role="status">{{ connected ? t('● 实时更新已连接') : t('○ 正在连接实时更新') }}</small><button @click="settings = true">{{ t("⚙ 邮箱与连接") }}</button><button @click="mcpOpen = true; sidebarOpen = false">{{ t("◇ AI 与 MCP ") }}<span v-if="pendingApprovals" class="approval-badge">{{ pendingApprovals }}</span></button><button @click="passwordOpen = true; sidebarOpen = false">{{ t("修改登录密码") }}</button><button @click="emit('logout')">{{ t("退出登录") }}</button><small>{{ t("你的邮件，留在你的邮箱。") }}</small></div>
+   <div class="sidebar-footer"><small role="status">{{ connected ? t('● 实时更新已连接') : t('○ 正在连接实时更新') }}</small><button @click="settings = true">{{ t("⚙ 邮箱与连接") }}</button><button @click="mcpOpen = true; sidebarOpen = false">{{ t("◇ AI 与 MCP ") }}<span v-if="pendingApprovals" class="approval-badge">{{ pendingApprovals }}</span></button><button @click="passwordOpen = true; sidebarOpen = false">{{ t("修改登录密码") }}</button><button @click="emit('logout')">{{ t("退出登录") }}</button></div>
   </aside>
   <button v-if="sidebarOpen" class="sidebar-shade" :aria-label="t('关闭导航')" @click="sidebarOpen = false"></button>
   <section class="mail-workspace">
-   <header class="workspace-toolbar"><button class="mobile-menu icon-button" :aria-label="t('打开导航')" @click="sidebarOpen = !sidebarOpen">☰</button><label class="search-box"><Icon name="search" /><input v-model="query" type="search" maxlength="256" :placeholder="t('搜索主题、发件人或验证码')" :aria-label="t('搜索邮件')" @input="search"></label><button class="secondary sync-button" :disabled="syncing || !accounts.length" @click="sync">{{ syncing ? t('同步中…') : t('↻ 同步') }}</button><ThemeSelect /><LanguageToggle /><button class="toolbar-settings icon-button" :aria-label="t('邮箱与连接')" @click="settings = true"><Icon name="settings" /></button></header>
+   <header class="workspace-toolbar"><button class="mobile-menu icon-button" :aria-label="t('打开导航')" @click="sidebarOpen = !sidebarOpen">☰</button><label class="search-box"><Icon name="search" /><input v-model="query" type="search" maxlength="256" :placeholder="t('搜索主题、发件人或验证码')" :aria-label="t('搜索邮件')" @input="search"></label><button class="sync-button" :class="{ syncing }" :disabled="syncing || !accounts.length" :aria-busy="syncing" @click="sync"><Icon name="refresh" /><span>{{ syncing ? t('同步中…') : t('同步') }}</span></button><ThemeSelect /><LanguageToggle /><button class="toolbar-settings icon-button" :aria-label="t('邮箱与连接')" @click="settings = true"><Icon name="settings" /></button></header>
    <p v-if="notice" class="workspace-notice notice" role="status">{{ t(notice) }}</p>
    <div v-if="error" class="workspace-error error" role="alert">{{ t(error) }} <button class="text-button" @click="loadEmails()">{{ t("重试") }}</button></div>
    <div class="mail-columns" :class="{ 'has-selection': selected }">

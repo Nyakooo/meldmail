@@ -91,3 +91,16 @@ func TestDurableOptimisticFlagAction(t *testing.T) {
 	}
 
 }
+
+func TestRestoreFlagValidation(t *testing.T) {
+	for _, change := range []FlagChange{{Restore: true}, {Archive: true}, {Delete: true}} {
+		if !change.Valid() {
+			t.Fatalf("valid move rejected: %+v", change)
+		}
+	}
+	for _, change := range []FlagChange{{Restore: true, Delete: true}, {Restore: true, Archive: true}, {Archive: true, Delete: true}, {}} {
+		if change.Valid() {
+			t.Fatalf("invalid move accepted: %+v", change)
+		}
+	}
+}

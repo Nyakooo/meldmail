@@ -12,6 +12,7 @@ import (
 	"io"
 	netmail "net/mail"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,12 +24,21 @@ import (
 
 var ErrInvalidMessage = errors.New("invalid outgoing message")
 
-const bodyCachePolicyVersion = 1
+const bodyCachePolicyVersion = 2
 
 var mailHTML = func() *bluemonday.Policy {
 	p := bluemonday.NewPolicy()
 	p.AllowElements("p", "br", "div", "span", "strong", "b", "em", "i", "u", "s", "blockquote", "pre", "code", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "table", "thead", "tbody", "tr", "th", "td", "a")
 	p.AllowAttrs("href").OnElements("a")
+	// Preserve mail layout using bluemonday's property-specific CSS validators.
+	// URLs, external stylesheets, positioning and executable attributes stay blocked.
+	p.AllowAttrs("class", "id").Matching(regexp.MustCompile(`^[a-zA-Z0-9_ -]{1,256}$`)).Globally()
+	p.AllowAttrs("style").Globally()
+	p.AllowStyles("display", "float", "clear", "box-sizing", "width", "max-width", "min-width", "height", "max-height", "margin", "margin-top", "margin-right", "margin-bottom", "margin-left", "padding", "padding-top", "padding-right", "padding-bottom", "padding-left", "color", "background-color", "font-family", "font-size", "font-weight", "font-style", "line-height", "text-align", "vertical-align", "text-decoration", "border", "border-top", "border-right", "border-bottom", "border-left", "border-color", "border-width", "border-style", "border-collapse", "border-spacing", "border-radius", "list-style-type", "list-style-position").Globally()
+	p.AllowStyles("list-style").MatchingEnum("none").Globally()
+	p.AllowAttrs("colspan", "rowspan").Matching(regexp.MustCompile(`^[1-9][0-9]{0,2}$`)).OnElements("td", "th")
+	p.AllowAttrs("align").Matching(regexp.MustCompile(`^(left|center|right|justify)$`)).OnElements("table", "tr", "td", "th", "div", "p")
+	p.AllowAttrs("width", "cellpadding", "cellspacing", "border").Matching(regexp.MustCompile(`^[0-9]{1,4}%?$`)).OnElements("table", "td", "th")
 	p.AllowURLSchemes("http", "https", "mailto")
 	p.RequireNoFollowOnLinks(true)
 	p.SkipElementsContent("script", "style", "iframe", "object", "embed", "form", "svg", "math")
@@ -109,7 +119,11 @@ func (s *Service) readBody(ctx context.Context, id int64) (result EmailContent, 
 		return result, err
 	}
 	var sanitized bytes.Buffer
-	if err := mailHTML.SanitizeReaderToWriter(strings.NewReader(content.HTML), &bodyWriter{writer: &sanitized, remaining: imapclient.MaxBodyBytes}); err != nil {
+	writer := &bodyWriter{writer: &sanitized, remaining: imapclient.MaxBodyBytes}
+	if _, err := io.WriteString(writer, safeMailStyles(content.HTML)); err != nil {
+		return result, fmt.Errorf("mail sanitize styles: %w", err)
+	}
+	if err := mailHTML.SanitizeReaderToWriter(strings.NewReader(content.HTML), writer); err != nil {
 		return result, fmt.Errorf("mail sanitize: %w", err)
 	}
 	content.HTML = sanitized.String()

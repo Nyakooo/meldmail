@@ -16,6 +16,7 @@ import (
 
 type Fixture struct {
 	failSelect           atomic.Pointer[string]
+	emptyHeaderSearch    atomic.Bool
 	User                 *imapmemserver.User
 	Port                 int
 	ServerTLS, ClientTLS *tls.Config
@@ -66,4 +67,12 @@ func (s *faultSession) Select(name string, options *imap.SelectOptions) (*imap.S
 		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Text: "injected destination selection failure"}
 	}
 	return s.UserSession.Select(name, options)
+}
+
+func (f *Fixture) EmptyHeaderSearch() { f.emptyHeaderSearch.Store(true) }
+func (s *faultSession) Search(kind imapserver.NumKind, criteria *imap.SearchCriteria, options *imap.SearchOptions) (*imap.SearchData, error) {
+	if s.fixture.emptyHeaderSearch.Load() && len(criteria.Header) > 0 {
+		return &imap.SearchData{All: imap.UIDSet{}}, nil
+	}
+	return s.UserSession.Search(kind, criteria, options)
 }

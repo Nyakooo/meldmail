@@ -17,10 +17,17 @@ type FlagChange struct {
 	IsStarred *bool `json:"is_starred,omitempty"`
 	Archive   bool  `json:"archive,omitempty"`
 	Delete    bool  `json:"delete,omitempty"`
+	Restore   bool  `json:"restore,omitempty"`
 }
 
 func (c FlagChange) Valid() bool {
-	return !(c.Archive && c.Delete) && (c.IsRead != nil || c.IsStarred != nil || c.Archive || c.Delete)
+	moves := 0
+	for _, enabled := range []bool{c.Archive, c.Delete, c.Restore} {
+		if enabled {
+			moves++
+		}
+	}
+	return moves <= 1 && (c.IsRead != nil || c.IsStarred != nil || moves == 1)
 }
 
 type FlagAction struct {
@@ -54,6 +61,9 @@ func pendingRemovalSQL(idSQL string, archive bool) string {
 	if archive {
 		field = "archive"
 	}
+	return pendingMoveSQL(idSQL, field)
+}
+func pendingMoveSQL(idSQL, field string) string {
 	// Materialize at most 128 pending IDs once, rather than a correlated
 	// settings lookup for every row in a full filtered-count query.
 	numericID := "CAST(substr(pending.key," + strconv.Itoa(len(flagKeyPrefix)+1) + ") AS INTEGER)"
@@ -78,6 +88,9 @@ func (s *Store) QueueFlags(ctx context.Context, id int64, change FlagChange) (up
 	e, err := scanEmail(tx.QueryRowContext(ctx, "SELECT "+emailColumns+" FROM emails e JOIN folders f ON f.id=e.folder_id WHERE e.id=?", id))
 	if err != nil {
 		return e, err
+	}
+	if change.Restore && e.FolderRole != "trash" && e.FolderRole != "archive" || change.Archive && e.FolderRole == "trash" || change.Delete && e.FolderRole == "trash" {
+		return e, ErrInvalidQuery
 	}
 	var count int
 	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM settings WHERE key=?", flagKey(id)).Scan(&count); err != nil {

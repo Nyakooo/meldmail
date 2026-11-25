@@ -13,7 +13,7 @@ require (
 )
 
 require (
-	github.com/aymerick/douceur v0.2.0 // indirect
+	github.com/aymerick/douceur v0.2.0
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emersion/go-message v0.18.2 // indirect
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect

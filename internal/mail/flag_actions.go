@@ -18,7 +18,7 @@ func (s *Service) ChangeFlags(ctx context.Context, id int64, change storage.Flag
 	if err != nil {
 		return e, err
 	}
-	if err := s.Events.Publish("flag_updated", map[string]interface{}{"id": e.ID, "is_read": e.IsRead, "is_starred": e.IsStarred, "archived": change.Archive, "deleted": change.Delete, "pending": true}); err != nil {
+	if err := s.Events.Publish("flag_updated", map[string]interface{}{"id": e.ID, "is_read": e.IsRead, "is_starred": e.IsStarred, "archived": change.Archive, "deleted": change.Delete, "restored": change.Restore, "pending": true}); err != nil {
 		return e, err
 	}
 	select {
@@ -80,7 +80,7 @@ func (s *Service) ProcessFlagActions(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			if err := s.Events.Publish("flag_updated", flagEvent{Email: e, Archived: action.Change.Archive, Deleted: action.Change.Delete, Pending: false}); err != nil {
+			if err := s.Events.Publish("flag_updated", flagEvent{Email: e, Archived: action.Change.Archive, Deleted: action.Change.Delete, Restored: action.Change.Restore, Pending: false}); err != nil {
 				return err
 			}
 			continue
@@ -200,5 +200,6 @@ type flagEvent struct {
 	storage.Email
 	Archived bool `json:"archived"`
 	Deleted  bool `json:"deleted"`
+	Restored bool `json:"restored"`
 	Pending  bool `json:"pending"`
 }

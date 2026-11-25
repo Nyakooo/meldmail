@@ -47,6 +47,7 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 	}
 	deleted := pendingRemovalSQL("e.id", false)
 	archived := pendingRemovalSQL("e.id", true)
+	restored := pendingMoveSQL("e.id", "restore")
 	clauses := []string{"1=1"}
 	if q.Folder != "trash" {
 		clauses = append(clauses, "NOT "+deleted)
@@ -60,18 +61,21 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 		q.Folder = "inbox"
 	}
 	if q.Folder == "all" {
-		clauses = append(clauses, "f.role<>'trash'")
+		clauses = append(clauses, "(f.role<>'trash' OR "+restored+")")
 	}
 	if q.Folder == "inbox" {
 		clauses = append(clauses, "NOT "+pendingRemovalSQL("e.id", true))
 	}
 	if q.Folder == "trash" || q.Folder == "archive" {
+		clauses = append(clauses, "NOT "+restored)
 		pending := deleted
 		if q.Folder == "archive" {
 			pending = archived
 		}
 		clauses = append(clauses, "(f.role=? OR f.name=? OR "+pending+")")
 		args = append(args, q.Folder, q.Folder)
+	} else if q.Folder == "inbox" {
+		clauses = append(clauses, "(f.role='inbox' OR f.name='INBOX' OR "+restored+")")
 	} else if q.Folder != "all" {
 		clauses = append(clauses, "(f.role=? OR f.name=?)")
 		args = append(args, q.Folder, q.Folder)
@@ -107,7 +111,7 @@ func (s *Store) ListEmails(ctx context.Context, q EmailQuery) (page EmailPage, r
 		args = append(args, cursor.Date, cursor.Date, cursor.ID)
 	}
 	args = append(args, q.Limit+1)
-	columns := strings.TrimSuffix(emailColumns, "f.role") + "CASE WHEN " + deleted + " THEN 'trash' WHEN " + archived + " THEN 'archive' ELSE f.role END,CASE WHEN " + deleted + " THEN 'delete' WHEN " + archived + " THEN 'archive' ELSE '' END"
+	columns := strings.TrimSuffix(emailColumns, "f.role") + "CASE WHEN " + deleted + " THEN 'trash' WHEN " + archived + " THEN 'archive' WHEN " + restored + " THEN 'inbox' ELSE f.role END,CASE WHEN " + deleted + " THEN 'delete' WHEN " + archived + " THEN 'archive' WHEN " + restored + " THEN 'restore' ELSE '' END"
 	rows, err := s.DB.QueryContext(ctx, "SELECT "+columns+" FROM emails e JOIN folders f ON f.id=e.folder_id WHERE "+strings.Join(clauses, " AND ")+" ORDER BY e.date DESC,e.id DESC LIMIT ?", args...)
 	if err != nil {
 		return page, fmt.Errorf("storage list emails: %w", err)

@@ -63,6 +63,24 @@ func TestRecoverAcknowledgedMove(t *testing.T) {
 	if !action.MoveAcknowledged || action.DestinationUID == 0 || action.DestinationName != "Archive" {
 		t.Fatalf("missing acknowledgement checkpoint: %+v", action)
 	}
+	// Some providers return the source UIDVALIDITY in COPYUID.
+	action.DestinationValidity++
+	fixture.EmptyHeaderSearch()
+
+	// A UID with a mismatching identity must never be accepted after rollover.
+	wrong := action
+	wrong.MessageID = "different@example.com"
+	wrong.NextAt = 0
+	if err := store.RetryFlagAction(ctx, wrong); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ProcessFlagActions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := store.FlagActions(ctx)
+	if err != nil || len(pending) != 1 {
+		t.Fatal("mismatching destination identity accepted", err)
+	}
 	action.NextAt = 0
 	if err := store.RetryFlagAction(ctx, action); err != nil {
 		t.Fatal(err)

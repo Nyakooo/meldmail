@@ -133,6 +133,8 @@ func (s *Server) changeFlags(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, storage.ErrActionPending) {
 			http.Error(w, "a change is still pending for this email", 409)
+		} else if errors.Is(err, storage.ErrInvalidQuery) {
+			http.Error(w, "invalid action for this folder", 400)
 		} else {
 			storageError(w, err)
 		}

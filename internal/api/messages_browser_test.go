@@ -51,7 +51,7 @@ func TestMailActionsBrowser(t *testing.T) {
 	if err := store.InitPassword(ctx, string(hash)); err != nil {
 		t.Fatal(err)
 	}
-	raw := "From: Sender <sender@example.com>\r\nTo: browser@example.com\r\nSubject: Browser HTML fixture\r\nMessage-ID: <browser-original@example.com>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=fixture\r\n\r\n--fixture\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<h1>HTML body</h1><p>Safe browser content</p><script>window.hacked=true</script><img src=\"https://tracker.invalid/pixel\">\r\n--fixture\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=fixture.bin\r\nContent-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n--fixture--\r\n"
+	raw := "From: Sender <sender@example.com>\r\nTo: browser@example.com\r\nSubject: Browser HTML fixture\r\nMessage-ID: <browser-original@example.com>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=fixture\r\n\r\n--fixture\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<h1>HTML body</h1><p>Safe browser content</p><style>.detail-mark{list-style:none;padding:0}.detail-mark li{display:inline-block;width:25%}</style><ul class=\"detail-mark\"><li>-</li><li>-</li></ul><script>window.hacked=true</script><img src=\"https://tracker.invalid/pixel\">\r\n--fixture\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=fixture.bin\r\nContent-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n--fixture--\r\n"
 	if _, err := fixture.User.Append("INBOX", strings.NewReader(raw), &imap.AppendOptions{Time: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
@@ -137,6 +137,10 @@ const {chromium}=require(process.env.MELDMAIL_PLAYWRIGHT_MODULE);
   await page.locator('.email-item').first().click();
   await page.frameLocator('iframe[title="邮件正文"]').getByRole('heading',{name:'HTML body',exact:true}).waitFor();
   await page.locator('.cache-status').filter({hasText:'正文已保存到本地，下次直接读取'}).waitFor();
+  const readingFrame=page.frames().find(f=>f.parentFrame());
+  if(await readingFrame.locator('.detail-mark li').first().evaluate(el=>getComputedStyle(el).display)!=='inline-block')throw new Error('mail stylesheet layout lost');
+  await page.waitForFunction(()=>{const f=document.querySelector('.email-frame');return f.clientHeight>=f.contentDocument.body.getBoundingClientRect().height});
+
   await page.getByRole('button',{name:'切换为深色',exact:true}).click();await page.frameLocator('iframe[title="邮件正文"]').getByRole('heading',{name:'HTML body',exact:true}).waitFor();
   await page.waitForFunction(()=>document.documentElement.dataset.theme==='dark');
   const frame=page.frames().find(f=>f.parentFrame());await frame.waitForFunction(()=>getComputedStyle(document.body).backgroundColor==='rgb(37, 40, 45)');
@@ -152,11 +156,21 @@ const {chromium}=require(process.env.MELDMAIL_PLAYWRIGHT_MODULE);
   await page.getByRole('button',{name:'☆ 星标',exact:true}).click();await settled();await page.getByRole('button',{name:'★ 取消星标',exact:true}).waitFor();
   await page.getByRole('button',{name:'归档',exact:true}).click();await settled();await page.waitForFunction(()=>document.querySelectorAll('.email-item').length===0);
   await page.getByRole('button',{name:/已归档/}).click();await page.locator('.email-item').first().click();await page.frameLocator('iframe[title="邮件正文"]').getByRole('heading',{name:'HTML body',exact:true}).waitFor();
+  const disabledArchive=page.getByRole('button',{name:'归档',exact:true});
+  if(!await disabledArchive.isDisabled()||await disabledArchive.evaluate(el=>getComputedStyle(el).cursor)!=='not-allowed')throw new Error('disabled archive has a loading cursor');
   const incoming=async()=>{const before=await page.evaluate(()=>window.__mailEventCount);const response=await page.request.post(process.env.MELDMAIL_BROWSER_URL+'/fixture/incoming');if(!response.ok())throw new Error('incoming fixture failed');await page.waitForFunction(n=>window.__mailEventCount>n,before);if(await page.locator('.email-item').count()!==1)throw new Error('Inbox arrival leaked into a different folder')};await incoming();
   await page.setViewportSize({width:390,height:844});page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'删除',exact:true}).click();await settled();await page.getByLabel('打开导航',{exact:true}).click();await page.getByRole('button',{name:/废纸篓/}).click();await page.waitForFunction(()=>document.querySelectorAll('.email-item').length===1);
   await incoming();
+  await page.locator('.email-item').first().click();
+  const restore=page.getByRole('button',{name:'恢复到收件箱',exact:true});await restore.waitFor();
+  if(await page.getByRole('button',{name:'归档',exact:true}).count()||await page.getByRole('button',{name:'删除',exact:true}).count())throw new Error('trash exposes archive/delete');
+  if(await restore.evaluate(el=>getComputedStyle(el).cursor)==='wait')throw new Error('idle restore shows loading cursor');
+  await restore.click();await settled();await page.waitForFunction(()=>document.querySelectorAll('.email-item').length===0);
+  await page.getByLabel('打开导航',{exact:true}).click();await page.getByRole('button',{name:'统一收件箱',exact:true}).click();
+  await page.locator('.email-item').filter({hasText:'HTML fixture'}).first().click();
+  await page.frameLocator('iframe[title="邮件正文"]').getByRole('heading',{name:'HTML body',exact:true}).waitFor();
   if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('mobile overflow');if(tracker)throw new Error('remote tracker requested');if(errors.length)throw new Error(errors.join('\n'));
-  console.log('PASS: HTML reading, authenticated attachment download, compose/reply/forward, star/archive/trash, desktop/mobile; no XSS/tracker requests');
+  console.log('PASS: HTML reading, authenticated attachment download, compose/reply/forward, star/archive/trash/restore, disabled cursor, desktop/mobile; no XSS/tracker requests');
  }finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exit(1)});
 `

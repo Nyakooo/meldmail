@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
    - 单封仅拉取 `UID`、`FLAGS`、`INTERNALDATE`、`ENVELOPE`、`BODYSTRUCTURE` 及 **`BODY.PEEK[TEXT]<0.4096>`**（局部拉取前 4KB，解码清洗后截断至 **500 字符** 存入 `snippet`）。
    - 每 **45 分钟** 执行一次轻量状态校验（同步已读/删除）；断线采用指数退避重连（5s -> 15s -> 30s -> 60s），连续失败 5 次降级为 3 分钟 Polling。
 4. **阶段 2（按需阅读与流式下载）**：
-   - **正文阅读**：优先读取来源指纹匹配的 SQLite 正文缓存，命中时不建立 IMAP 连接，重启后仍可复用；未命中时拉取 `BODYSTRUCTURE`，定位 `text/html`（优先）和 `text/plain` 的 `PartID`，定向执行 `BODY.PEEK[<PartID>]`（单封正文硬上限 **5MB**）。服务端使用 `bluemonday` 清洗 HTML（防 XSS）后保存缓存并返回前端。缓存写入失败不阻止本次阅读，返回固定的 `cache_warning` 提示；不记录正文或数据库错误细节。正文读取与 HTTP 输出共同持有内存限额，慢客户端不能积压完整正文。
+   - **正文阅读**：优先读取来源指纹匹配的 SQLite 正文缓存，命中时不建立 IMAP 连接，重启后仍可复用；未命中时拉取 `BODYSTRUCTURE`，定位 `text/html`（优先）和 `text/plain` 的 `PartID`，定向执行 `BODY.PEEK[<PartID>]`（单封正文硬上限 **5MB**）。服务端使用 `bluemonday` 清洗 HTML（防 XSS）后保存缓存并返回前端。保留通过属性白名单校验的行内 CSS 和普通选择器样式（最多 128KiB），禁用脚本、外部样式、网络型 CSS 与远程图片；清洗策略变化时提升正文缓存版本。缓存写入失败不阻止本次阅读，返回固定的 `cache_warning` 提示；不记录正文或数据库错误细节。正文读取与 HTTP 输出共同持有内存限额，慢客户端不能积压完整正文。
    - **附件下载**：根据 `PartID` 定向拉取附件流（`io.Reader`），实时解码并直接 `io.Copy` 写入 HTTP `ResponseWriter`，**严禁 `io.ReadAll` 读入内存**。
 
 ---
@@ -240,10 +240,11 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 - `POST /api/auth/login` / `POST /api/auth/logout` / `GET /api/auth/me`
 - `GET/POST/PUT/DELETE /api/accounts` 及 `POST /api/accounts/test`（测试代理 + IMAP/SMTP 连通性，返回清晰诊断信息）
 - `GET/PUT /api/settings/proxy`（全局默认代理配置）
-- `GET /api/emails?account_id=&folder=&unread=&q=&cursor=&limit=50`（统一收件箱列表 + FTS5 检索；返回 `emails`、`next_cursor` 和不随游标缩小的筛选总数 `total`；前端使用前后翻页的游标历史；待确认的归档/删除在目标类目中返回有效 `folder_role` 和 `pending_action`，在确认前保留原始来源定位用于恢复）
+- `GET /api/emails?account_id=&folder=&unread=&q=&cursor=&limit=50`（统一收件箱列表 + FTS5 检索；返回 `emails`、`next_cursor` 和不随游标缩小的筛选总数 `total`；前端使用前后翻页的游标历史；待确认的归档/删除/恢复在目标类目中返回有效 `folder_role` 和 `pending_action`，在确认前保留原始来源定位用于恢复）
+- 恢复通过 flags 接口的 `{"restore":true}` 将废纸篓或归档邮件移回 `INBOX`；`restore`、`archive`、`delete` 互斥。恢复复用持久化移动检查点、失败重试与 SSE，确认前保留原始来源定位。废纸篓提供已读、星标与恢复操作，不显示归档或重复删除。
 - `GET /api/emails/:id`（优先返回本地正文；未命中则拉取、清洗并保存，含附件元信息与 `cached` / `local` 状态）
 - `GET /api/emails/:id/attachments/:part_id`（流式下载附件）
-- `PATCH /api/emails/:id/flags`（已读/未读/星标/归档/删除：先更新本地 DB 并推送 SSE，再异步同步 IMAP）
+- `PATCH /api/emails/:id/flags`（已读/未读/星标/归档/删除/恢复到收件箱：先更新本地 DB 并推送 SSE，再异步同步 IMAP）
 - `POST /api/emails/send`（撰写/回复/转发，走对应账号代理与 SMTP）
 - `GET /api/stats`（管理员会话鉴权；本地已同步总数/未读数、各账号汇总、内存与配额、CPU 采样、SQLite/WAL/SHM 占用和所在磁盘可用容量；无监控中间件）
 - `GET /api/events`（SSE 长连接，推送 `new_email`、`flag_updated`、`sync_status`、`mcp_approval_required`）
