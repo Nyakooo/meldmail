@@ -1,18 +1,19 @@
-![MeldMail official logo](assets/brand/meldmail-logo.svg)
+<p align="center">
+  <img src="assets/brand/meldmail-mark.svg" alt="MeldMail logo" width="72" height="45">
+</p>
+<h1 align="center">MeldMail</h1>
+<p align="center">Self-hosted email client · Go + Vue 3 + SQLite · One container</p>
+<p align="center">
+  <a href="README.md">简体中文</a> · <strong>English</strong>
+  <br>
+  <a href="#quick-deployment">Quick start</a> · <a href="#configuration">Configuration</a> · <a href="#nginx-and-https">Nginx / HTTPS</a> · <a href="#configuration-import-and-export">Configuration transfer</a>
+</p>
 
-![MeldMail desktop Light and Dark design](docs/design/desktop-light-dark.svg)
+![MeldMail desktop Light and Dark preview](docs/design/desktop-light-dark.svg)
 
-![MeldMail mobile design](docs/design/mobile-concept.svg)
+Desktop Light and Dark design reference; available features follow the current implementation. [Design guide](docs/DESIGN.md)
 
-These images are design references; available features follow the current implementation. See [DESIGN.md](docs/DESIGN.md) for brand assets and layout guidance.
-
----
-
-# MeldMail
-
-[简体中文](README.md) | **English**
-
-A self-hosted email web client built with Go, Vue 3 and SQLite. Runs in one container and provides an MCP endpoint.
+## Features
 
 - Unified inbox, search, read status, stars, archive and restore from Trash.
 - Background IMAP synchronization and live updates over SSE.

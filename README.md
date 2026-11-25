@@ -1,18 +1,19 @@
-![MeldMail Logo](assets/brand/meldmail-logo.svg)
+<p align="center">
+  <img src="assets/brand/meldmail-mark.svg" alt="MeldMail Logo" width="72" height="45">
+</p>
+<h1 align="center">MeldMail</h1>
+<p align="center">自托管多邮箱客户端 · Go + Vue 3 + SQLite · 单容器部署</p>
+<p align="center">
+  <strong>简体中文</strong> · <a href="README.en.md">English</a>
+  <br>
+  <a href="#快速部署">快速部署</a> · <a href="#配置说明">配置说明</a> · <a href="#nginx-与-https">Nginx / HTTPS</a> · <a href="#配置导入与导出">配置迁移</a>
+</p>
 
-![MeldMail 桌面端明暗主题设计](docs/design/desktop-light-dark.svg)
+![MeldMail 桌面端明暗主题预览](docs/design/desktop-light-dark.svg)
 
-![MeldMail 移动端设计](docs/design/mobile-concept.svg)
+桌面端明暗主题设计预览，具体功能以当前实现为准。[设计说明](docs/DESIGN.md)
 
-以上为界面设计参考；具体功能以当前实现为准。品牌素材与布局说明见 [设计文档](docs/DESIGN.md)。
-
----
-
-# MeldMail
-
-**简体中文** | [English](README.en.md)
-
-自托管多邮箱 Web 客户端，使用 Go、Vue 3 和 SQLite，单容器运行，提供 MCP 接口。
+## 功能
 
 - 统一收件箱、搜索、已读状态、星标、归档与废纸篓恢复。
 - 后台 IMAP 同步，浏览器关闭后继续收信；通过 SSE 更新页面。
