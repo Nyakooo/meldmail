@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AccountTransfer from './AccountTransfer.vue'
+import Icon from './Icon.vue'
 import { t } from './i18n'
 import { ref, reactive, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import type { Account, Diagnostic } from './types'
@@ -113,7 +114,7 @@ onMounted(() => { if (props.initialAccountId) { const account = props.accounts.f
    <header class="panel-heading"><div><p class="eyebrow">YOUR CONNECTIONS</p><h2 id="settings-title">{{ t("邮箱与连接") }}</h2></div><button class="icon-button" :aria-label="t('关闭设置')" @click="emit('close')">✕</button></header>
    <p v-if="error" class="error" role="alert">{{ t(error) }}</p><p v-if="notice" class="notice" role="status">{{ t(notice) }}</p>
    <div class="account-settings-grid">
-    <aside><button class="secondary" @click="reset">{{ t("＋ 添加邮箱") }}</button><button class="secondary transfer-tab" :class="{ active: section === 'proxy' }" @click="openSection('proxy')">{{ t("共用代理（可选）") }}</button><button class="secondary transfer-tab" :class="{ active: section === 'transfer' }" @click="openSection('transfer')">{{ t("导入 / 导出") }}</button><ul class="saved-accounts"><li v-for="account in props.accounts" :key="account.id"><button :class="{ active: section === 'account' && editing === account.id }" @click="edit(account)"><strong>{{ account.display_name || account.email }}</strong><small>{{ account.email }}</small></button><button class="delete-button" :disabled="busy" :aria-label="t('删除') + ' ' + account.email" @click="remove(account)">{{ t("删除") }}</button></li></ul></aside>
+    <aside><button class="secondary" @click="reset">{{ t("＋ 添加邮箱") }}</button><button class="secondary transfer-tab" :class="{ active: section === 'proxy' }" @click="openSection('proxy')">{{ t("共用代理（可选）") }}</button><button class="secondary transfer-tab" :class="{ active: section === 'transfer' }" @click="openSection('transfer')">{{ t("导入 / 导出") }}</button><ul class="saved-accounts"><li v-for="account in props.accounts" :key="account.id" :class="{ selected: section === 'account' && editing === account.id }"><button :class="{ active: section === 'account' && editing === account.id }" @click="edit(account)"><strong>{{ account.display_name || account.email }}</strong><small>{{ account.email }}</small></button><button class="delete-button" :disabled="busy" :aria-label="t('删除') + ' ' + account.email" :title="t('删除') + ' ' + account.email" @click="remove(account)"><Icon name="trash" /></button></li></ul></aside>
     <div class="account-settings-content"><AccountTransfer v-if="section === 'transfer'" :count="accounts.length" @imported="importedConfig" />
     <form v-else-if="section === 'proxy'" class="proxy-settings global-proxy-panel" @submit.prevent="saveProxy"><div class="modal-scroll">
      <h3>{{ t('共用代理') }}</h3><p class="field-hint">{{ t('仅影响主动选择“使用共用代理”的邮箱；其他邮箱按各自的连接方式连接。') }}</p>

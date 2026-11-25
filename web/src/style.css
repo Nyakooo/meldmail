@@ -125,3 +125,14 @@
  .compose-fields{grid-template-columns:minmax(0,1fr)}.compose-fields>*{grid-column:1!important}
  .modal-scroll{padding-right:4px}
 }
+
+/* Keep each mailbox identity and its delete action in one aligned row. */
+.saved-accounts li{display:flex;align-items:center;gap:2px;padding:4px;border:1px solid transparent;border-radius:7px;margin-bottom:4px}
+.saved-accounts li.selected{background:var(--selected)}
+.saved-accounts li>button:first-child{flex:1;min-width:0;width:auto;padding:10px 4px;text-align:left}
+.saved-accounts li>button:first-child.active{background:transparent}
+.saved-accounts li:not(.selected):hover{background:var(--hover)}
+.saved-accounts li>button:first-child:hover{background:transparent}
+.saved-accounts .delete-button{position:static;flex:0 0 30px;width:30px;height:32px;padding:7px;display:grid;place-items:center;border-radius:5px;color:var(--muted)}
+.saved-accounts .delete-button:hover,.saved-accounts .delete-button:focus-visible{color:var(--danger);background:var(--surface)}
+.saved-accounts .delete-button .ui-icon{width:16px;height:16px}
