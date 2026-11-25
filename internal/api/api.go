@@ -39,6 +39,7 @@ type Server struct {
 	trust          bool
 	mu             sync.Mutex
 	authMu         sync.Mutex
+	configRequests chan struct{}
 	sessionChanged chan struct{}
 	sessions       map[[32]byte]time.Time
 	attempts       map[string]attempt
@@ -49,7 +50,7 @@ func New(store *storage.Store, trust bool, mailService *mail.Service) (http.Hand
 	if err != nil {
 		return nil, fmt.Errorf("api assets: %w", err)
 	}
-	s := &Server{observer: observe.New(), mail: mailService, store: store, trust: trust, sessions: make(map[[32]byte]time.Time), attempts: make(map[string]attempt), sessionChanged: make(chan struct{})}
+	s := &Server{observer: observe.New(), mail: mailService, store: store, trust: trust, sessions: make(map[[32]byte]time.Time), attempts: make(map[string]attempt), sessionChanged: make(chan struct{}), configRequests: make(chan struct{}, 1)}
 	if mailService != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

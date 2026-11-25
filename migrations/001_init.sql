@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     smtp_port INTEGER NOT NULL DEFAULT 465,
     smtp_tls TEXT NOT NULL DEFAULT 'implicit',  -- implicit | starttls
     credentials_enc BLOB NOT NULL,              -- AES-256-GCM 加密的 JSON
-    proxy_mode TEXT NOT NULL DEFAULT 'global',  -- global | direct | http | https | socks5
+    proxy_mode TEXT NOT NULL DEFAULT 'direct',  -- global | direct | http | https | socks5
     proxy_url_enc BLOB,                         -- AES-256-GCM 加密的代理 URL
     status TEXT NOT NULL DEFAULT 'active',      -- active | error | paused
     last_error TEXT NOT NULL DEFAULT '',

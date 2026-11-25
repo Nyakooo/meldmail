@@ -25,6 +25,7 @@ func (s *Server) accountRoutes(mux *http.ServeMux) {
 		"POST /api/accounts": s.saveAccount, "PUT /api/accounts": s.saveAccount, "PUT /api/accounts/{id}": s.saveAccount,
 		"DELETE /api/accounts": s.deleteAccount, "DELETE /api/accounts/{id}": s.deleteAccount,
 		"POST /api/accounts/test": s.testAccount, "POST /api/accounts/{id}/sync": s.syncAccount,
+		"POST /api/accounts/export": s.exportConfig, "POST /api/accounts/import": s.importConfig,
 		"GET /api/settings/proxy": s.getProxy, "PUT /api/settings/proxy": s.putProxy,
 	} {
 		mux.HandleFunc(pattern, s.protected(handler))

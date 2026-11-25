@@ -34,6 +34,7 @@ type Service struct {
 	interactive chan struct{}
 	bodyMemory  chan struct{}
 	flagWake    chan struct{}
+	configWork  chan struct{}
 }
 
 func New(store *storage.Store, key []byte) (*Service, error) {
@@ -41,7 +42,7 @@ func New(store *storage.Store, key []byte) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{Store: store, Cipher: cipher, Limiter: syncer.NewLimiter(), Events: sse.New(), interactive: make(chan struct{}, 3), bodyMemory: make(chan struct{}, 1), flagWake: make(chan struct{}, 1)}, nil
+	return &Service{Store: store, Cipher: cipher, Limiter: syncer.NewLimiter(), Events: sse.New(), interactive: make(chan struct{}, 3), bodyMemory: make(chan struct{}, 1), flagWake: make(chan struct{}, 1), configWork: make(chan struct{}, 1)}, nil
 }
 
 type AccountInput struct {
@@ -133,7 +134,7 @@ func (s *Service) Prepare(ctx context.Context, input AccountInput, existing *sto
 		return a, fmt.Errorf("account: credentials are required")
 	}
 	if a.ProxyMode == "" {
-		a.ProxyMode = "global"
+		a.ProxyMode = "direct"
 	}
 	endpoint := ""
 	if input.ProxyURL != nil {
@@ -203,7 +204,11 @@ func (s *Service) SetGlobalProxy(ctx context.Context, endpoint string) error {
 }
 func (s *Service) Dialer(ctx context.Context, a storage.Account) (*proxy.Dialer, error) {
 	global := ""
-	if a.ProxyMode == "global" || a.ProxyMode == "" {
+	mode := a.ProxyMode
+	if mode == "" {
+		mode = "direct"
+	}
+	if mode == "global" {
 		var err error
 		global, err = s.GlobalProxy(ctx)
 		if err != nil {
@@ -218,7 +223,7 @@ func (s *Service) Dialer(ctx context.Context, a storage.Account) (*proxy.Dialer,
 		}
 		endpoint = string(plain)
 	}
-	return proxy.New(a.ProxyMode, endpoint, global)
+	return proxy.New(mode, endpoint, global)
 }
 func (s *Service) Sync(ctx context.Context, id int64) (count int, result error) {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)

@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     smtp_port INTEGER NOT NULL DEFAULT 465,
     smtp_tls TEXT NOT NULL DEFAULT 'implicit',  -- implicit | starttls
     credentials_enc BLOB NOT NULL,              -- AES-256-GCM 加密的 JSON
-    proxy_mode TEXT NOT NULL DEFAULT 'global',  -- global | direct | http | https | socks5
+    proxy_mode TEXT NOT NULL DEFAULT 'direct',  -- global | direct | http | https | socks5
     proxy_url_enc BLOB,                         -- AES-256-GCM 加密的代理 URL
     status TEXT NOT NULL DEFAULT 'active',      -- active | error | paused
     last_error TEXT NOT NULL DEFAULT '',
@@ -211,7 +211,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 - `socks5`：`golang.org/x/net/proxy`，支持用户名/密码认证。
 - `http`：TCP 连接代理后发送 `CONNECT target:port HTTP/1.1`（含可选 `Proxy-Authorization: Basic`），校验 `200` 后返回 `net.Conn`。
 - `https`：先与代理建立 TLS 连接，再在 TLS 内执行 `CONNECT` 握手。
-- `global`：读取 `settings` 全局代理配置，未配置则回退 `direct`。
+- `global`：仅显式选择共用代理的邮箱读取 `settings` 中的共用代理配置，未配置则回退 `direct`。新邮箱与省略连接方式的创建请求默认 `direct`；修改共用代理不得重启或改变直连及独立代理邮箱。
 - **强制要求**：`go-imap`（收）与 `go-mail`（发）均必须通过此 `Dialer` 建立底层连接后再执行隐式 TLS 或 STARTTLS。
 
 ### 4.2 主流邮箱适配（`internal/mail/adapter`）
@@ -239,7 +239,9 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 ### 5.1 REST API & SSE
 - `POST /api/auth/login` / `POST /api/auth/logout` / `GET /api/auth/me`
 - `GET/POST/PUT/DELETE /api/accounts` 及 `POST /api/accounts/test`（测试代理 + IMAP/SMTP 连通性，返回清晰诊断信息）
-- `GET/PUT /api/settings/proxy`（全局默认代理配置）
+- `POST /api/accounts/export`：管理员认证后提交独立配置密码（至少 12 个字符），返回版本化加密配置包，最多 100 个邮箱、512KiB 明文配置。PBKDF2-HMAC-SHA256（600000 次迭代、随机 16 字节 salt）派生 AES-256-GCM 密钥；包内包括现有邮箱凭据和代理，不包括主密钥、管理员密码、MCP 令牌或邮件正文。配置操作单并发，HTTP 请求上限 1MiB，禁止明文凭据日志与临时文件。
+- `POST /api/accounts/import`：使用配置密码解密并校验整个包；按去除首尾空格、忽略大小写的邮箱地址去重。重复条目以后出现的连接配置为准，空凭据不覆盖前一项；与已有邮箱合并时保留账号 ID 与邮件，缓存仍按来源变化规则失效；整批账号与默认代理在同一短事务写入，并用目标实例主密钥重新加密。文件中共用代理非空时更新本地共用代理，为空时保留已有共用代理；仅主动选择共用代理的账号使用它。导入不生成或刷新服务商授权码与 OAuth 令牌。
+- `GET/PUT /api/settings/proxy`（可选共用代理配置，仅影响显式选择 global 的邮箱）
 - `GET /api/emails?account_id=&folder=&unread=&q=&cursor=&limit=50`（统一收件箱列表 + FTS5 检索；返回 `emails`、`next_cursor` 和不随游标缩小的筛选总数 `total`；前端使用前后翻页的游标历史；待确认的归档/删除/恢复在目标类目中返回有效 `folder_role` 和 `pending_action`，在确认前保留原始来源定位用于恢复）
 - 恢复通过 flags 接口的 `{"restore":true}` 将废纸篓或归档邮件移回 `INBOX`；`restore`、`archive`、`delete` 互斥。恢复复用持久化移动检查点、失败重试与 SSE，确认前保留原始来源定位。废纸篓提供已读、星标与恢复操作，不显示归档或重复删除。
 - `GET /api/emails/:id`（优先返回本地正文；未命中则拉取、清洗并保存，含附件元信息与 `cached` / `local` 状态）
@@ -307,3 +309,10 @@ Codex 必须严格按顺序实现，每阶段提供可复现的测试命令并�
 | **M4：完整收发与流式防 OOM** | 按需拉取正文 + `bluemonday` 清洗、流式附件下载、SMTP 撰写/回复/转发、已读/星标/归档双向同步。 | 1. 附件下载采用纯流式 `io.Copy`，大附件测试内存峰值 < 180MB。<br>2. 网页端可正常阅读 HTML 邮件、下载附件、发送/回复/转发邮件。 |
 | **M5：MCP Server 闭环** | `/mcp` Streamable HTTP 服务、9 个标准工具、Token 权限隔离、Web 端审批流弹窗与审计日志。 | 1. 外部 MCP 客户端可列出并调用 9 个工具。<br>2. `readonly` Token 调用 `send_email` 返回 403。<br>3. `readwrite` + `require_approval` 调用 `send_email` 触发 Web 端审批，批准后执行发送。 |
 | **M6：压测与发布收尾** | 竞态检测、内存/并发压测、完善 `README.md`（含 Docker Compose 与 Nginx 反代模板）与 `LICENSE`。 | 1. `go test -race ./...` 100% 通过。<br>2. 前端 `npm run build` 无 TS 报错且正确嵌入 Go 二进制。<br>3. Docker 镜像在 256MB 限制下稳定运行。 |
+
+## 8. 配置迁移与界面一致性补充（2026-11-25）
+
+- 侧栏邮箱计数随当前分类（收件箱、全部、未读、归档、废纸篓）切换；未读排除废纸篓。预取分类计数以即时切换，并通过 SSE 更新，按待确认移动的有效目标分类统计，失败回滚后恢复。
+- 连接错误不显示孤立叹号；使用可点击的状态说明，进入对应邮箱设置查看诊断。状态不得假装连接成功或掩盖认证错误。
+- 桌面端模态框优先横向多列，窄屏单列；统一主题化细滚动条，保持键盘焦点与移动端可访问性。同步与主题切换使用一致的圆形按钮、图标尺寸、线宽和主题色。默认代理与邮箱代理 URL 编辑框明文显示，便于核对连接地址。共用代理位于独立“共用代理（可选）”入口，新邮箱默认直连；邮箱表单只显示其独立连接方式。仅显式选择 global 的账号使用共用代理。不同时展示两个代理编辑区域。
+- 加密配置包的口令派生参数参考 [OWASP PBKDF2-HMAC-SHA256 工作因子](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2)，不修改数据库已有凭据的主密钥加密方式。

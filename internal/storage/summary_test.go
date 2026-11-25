@@ -39,3 +39,72 @@ func TestMailSummaryCountsAllLocalFolders(t *testing.T) {
 		t.Fatal("database path unavailable", err)
 	}
 }
+
+func TestCategoryCountsFollowPendingMoves(t *testing.T) {
+	store, account, _, email := cachedBodyFixture(t)
+	ctx := context.Background()
+	check := func(folder string, unread bool, want int64) {
+		t.Helper()
+		summary, err := store.MailSummary(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := store.ListEmails(ctx, EmailQuery{Folder: folder, Unread: unread})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var count int64
+		switch {
+		case unread:
+			count = summary.Categories.Unread
+		case folder == "inbox":
+			count = summary.Categories.Inbox
+		case folder == "all":
+			count = summary.Categories.All
+		case folder == "archive":
+			count = summary.Categories.Archive
+		case folder == "trash":
+			count = summary.Categories.Trash
+		}
+		if count != want || page.Total != want {
+			t.Fatalf("category %s unread=%v: summary=%d list=%d want=%d", folder, unread, count, page.Total, want)
+		}
+		if len(summary.Accounts) != 1 || summary.Accounts[0].ID != account.ID || summary.Accounts[0].Categories != summary.Categories {
+			t.Fatal("per-account count mismatch")
+		}
+	}
+	check("inbox", false, 1)
+	check("all", true, 1)
+	if _, err := store.QueueFlags(ctx, email.ID, FlagChange{Delete: true}); err != nil {
+		t.Fatal(err)
+	}
+	check("inbox", false, 0)
+	check("all", true, 0)
+	check("trash", false, 1)
+	actions, err := store.FlagActions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trash, err := store.PrepareFolder(ctx, account.ID, "Trash", "trash", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishFlagAction(ctx, actions[0], &trash, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.QueueFlags(ctx, email.ID, FlagChange{Restore: true}); err != nil {
+		t.Fatal(err)
+	}
+	check("inbox", false, 1)
+	check("all", true, 1)
+	check("trash", false, 0)
+	actions, err = store.FlagActions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishFlagAction(ctx, actions[0], nil, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	check("trash", false, 1)
+	check("inbox", false, 0)
+}

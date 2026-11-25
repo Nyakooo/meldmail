@@ -1,3 +1,13 @@
+![MeldMail official logo](assets/brand/meldmail-logo.svg)
+
+![MeldMail desktop Light and Dark design](docs/design/desktop-light-dark.svg)
+
+![MeldMail mobile design](docs/design/mobile-concept.svg)
+
+These images are design references; available features follow the current implementation. See [DESIGN.md](docs/DESIGN.md) for brand assets and layout guidance.
+
+---
+
 # MeldMail
 
 [简体中文](README.md) | **English**
@@ -166,11 +176,21 @@ mkdir -p data
 
 The new installation uses the password in `.env`; add your mailboxes again. Backup directories contain sensitive data and must not be committed or published.
 
+## Configuration import and export
+
+Open **Accounts & connections → Import / export**. On the source instance, choose a separate configuration password of at least 12 characters and download the encrypted JSON. On the destination, choose that file, enter the same password and select **Import and merge**. The destination encrypts credentials with its own master key; you do not need to copy the source master key or re-enter still-valid app passwords.
+
+Bundles include mailbox connections, existing app passwords / OAuth tokens and proxies. They exclude messages, the administrator password and MCP tokens. Email addresses are matched after trimming whitespace and ignoring case. Repeated imports update the original account and retain its messages. Within a bundle, the last connection wins, while missing credentials retain the earlier values. Validation failures do not write partial configuration. A nonempty shared proxy in the bundle replaces the destination shared proxy, affecting only mailboxes that explicitly use it.
+
+The configuration password is not stored on the server. Keep both the file and its password safe. OAuth tokens remain subject to provider expiry; import does not refresh or extend their lifetime.
+
+Sidebar counts switch immediately with the selected category and update through mail events. Select **Reconnecting** to open the corresponding connection settings and diagnosis.
+
 ## Mailboxes and proxies
 
 Open **Accounts & connections** after signing in. Enter the address and application password, test connectivity, then save. Gmail requires a Google app password rather than the normal Google account password. Automatic Outlook OAuth2 token refresh remains an extension hook.
 
-When no global proxy is configured, the default proxy mode connects directly. Connectivity tests exercise the path **from the container to the provider**, not from your browser to Gmail. Inside Docker, `127.0.0.1` refers to the container itself; a host proxy needs an address reachable from that container.
+Each mailbox chooses its own connection, and **new mailboxes default to direct connections**. Configure an HTTP, HTTPS or SOCKS5 URL only for mailboxes that need a proxy. To reuse one URL, save it under **Accounts & connections → Shared proxy (optional)**, then explicitly select **Use shared proxy** for those mailboxes. Shared proxy edits do not affect direct or mailbox-specific connections. Connectivity tests exercise the path **from the container to the provider**, not from your browser to Gmail. Inside Docker, `127.0.0.1` refers to the container itself; a host proxy needs an address reachable from that container.
 
 - TLS failures or connection resets happen before authentication; they do not by themselves prove the password is wrong.
 - If the host connects but the container cannot, check DNS, IPv4/IPv6 and proxy reachability separately.

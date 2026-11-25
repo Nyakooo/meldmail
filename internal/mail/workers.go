@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -27,18 +28,29 @@ func (s *Service) workerAccounts(ctx context.Context) ([]syncer.Account, error) 
 	if err != nil {
 		return nil, err
 	}
-	proxy, err := s.GlobalProxy(ctx)
-	if err != nil {
-		return nil, err
+	proxy := ""
+	for _, account := range accounts {
+		if account.ProxyMode == "global" {
+			proxy, err = s.Store.Setting(ctx, "global_proxy_enc")
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+			break
+		}
 	}
 	result := make([]syncer.Account, 0, len(accounts))
 	for _, a := range accounts {
+		// Shared proxy edits must not restart direct or mailbox-specific connections.
+		shared := ""
+		if a.ProxyMode == "global" {
+			shared = proxy
+		}
 		// Only connection settings participate, so sync status/timestamps cannot restart workers.
 		config := struct {
 			Email, Provider, AuthType, IMAPHost, IMAPTLS, ProxyMode, Global string
 			IMAPPort                                                        int
 			Credentials, Proxy                                              []byte
-		}{a.Email, a.Provider, a.AuthType, a.IMAPHost, a.IMAPTLS, a.ProxyMode, proxy, a.IMAPPort, a.CredentialsEnc, a.ProxyURLEnc}
+		}{a.Email, a.Provider, a.AuthType, a.IMAPHost, a.IMAPTLS, a.ProxyMode, shared, a.IMAPPort, a.CredentialsEnc, a.ProxyURLEnc}
 		encoded, err := json.Marshal(config)
 		if err != nil {
 			return nil, fmt.Errorf("worker configuration: %w", err)

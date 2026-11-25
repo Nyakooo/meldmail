@@ -11,7 +11,7 @@ import MessageReader from './MessageReader.vue'
 import Composer from './Composer.vue'
 import MCPPanel from './MCPPanel.vue'
 import ApprovalReview from './ApprovalReview.vue'
-import type { Account, Email, EmailPage, EmailUpdate, ComposeAction, Approval, SystemStats as StatsData } from './types'
+import type { Account, Email, EmailPage, EmailUpdate, ComposeAction, Approval, SystemStats as StatsData, CategoryCounts } from './types'
 import { request, errorMessage } from './http'
 const emit = defineEmits<{ logout: []; passwordChanged: [] }>()
 const accounts = ref<Account[]>([])
@@ -44,6 +44,7 @@ const mcpRevision = ref(0)
 const pendingApprovals = ref(0)
 let statsTimer: ReturnType<typeof setInterval> | undefined
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
+let countRefreshTimer: ReturnType<typeof setTimeout> | undefined
 let statsRequest: AbortController | undefined
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 const connected = ref(false)
@@ -82,16 +83,28 @@ async function movePage(next: boolean) {
  finally { navigating.value = false; if (pageDirty.value) scheduleRefresh() }
 }
 async function loadStats() {
- statsRequest?.abort(); const controller = new AbortController(); statsRequest = controller
- try { const result = await request<StatsData>('/api/stats', { signal: controller.signal }); if (!controller.signal.aborted) { stats.value = result; statsUnavailable.value = false } }
+ statsRequest?.abort(); const controller = new AbortController(); statsRequest = controller; const revision = eventRevision
+ try { const result = await request<StatsData>('/api/stats', { signal: controller.signal }); if (!controller.signal.aborted && revision === eventRevision) { stats.value = result; statsUnavailable.value = false } }
  catch { if (!controller.signal.aborted) statsUnavailable.value = true }
 }
 function visibleStats() { if (!document.hidden) void loadStats() }
 function scheduleRefresh() {
- eventRevision++; pageDirty.value = true; clearTimeout(refreshTimer)
- refreshTimer = setTimeout(() => { if (!navigating.value) void loadEmails(); void loadStats() }, 400)
+ eventRevision++; pageDirty.value = true; clearTimeout(refreshTimer); clearTimeout(countRefreshTimer)
+ countRefreshTimer = setTimeout(() => { void loadStats() }, 50)
+ refreshTimer = setTimeout(() => { if (!navigating.value) void loadEmails() }, 400)
 }
-function accountCount(id: number) { return stats.value?.mail.accounts.find(account => account.id === id)?.total }
+const countCategory = computed<keyof CategoryCounts>(() => unread.value ? 'unread' : folder.value as keyof CategoryCounts)
+function accountCount(id: number) {
+ const summary = id ? stats.value?.mail.accounts.find(account => account.id === id) : stats.value?.mail
+ return summary?.categories[countCategory.value]
+}
+function accountStatus(account: Account) {
+ return account.status === 'error' ? t('连接暂不可用') : account.status === 'paused' ? t('已暂停') : t('同步已启用')
+}
+function connectionDetails(account: Account) {
+ settings.value = true; settingsAccount.value = account.id; sidebarOpen.value = false
+}
+const settingsAccount = ref<number | null>(null)
 function search() { activeRequest?.abort(); pageDirty.value = true; clearTimeout(searchTimer); searchTimer = setTimeout(filter, 250) }
 async function accountSaved(account: Account) {
  settings.value = false; sidebarOpen.value = false; accountId.value = account.id; folder.value = 'inbox'; unread.value = false; query.value = ''; selected.value = null
@@ -161,7 +174,7 @@ function startEvents() {
  })
 }
 onMounted(async () => { statsTimer = setInterval(visibleStats, 15000); document.addEventListener('visibilitychange', visibleStats); void loadStats(); try { await loadAccounts(); await loadEmails(); startEvents() } catch (err) { error.value = errorMessage(err) } })
-onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); clearInterval(statsTimer); document.removeEventListener('visibilitychange', visibleStats); statsRequest?.abort(); activeRequest?.abort(); events?.close() })
+onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); clearTimeout(countRefreshTimer); clearInterval(statsTimer); document.removeEventListener('visibilitychange', visibleStats); statsRequest?.abort(); activeRequest?.abort(); events?.close() })
 </script>
 <template>
  <div class="workspace">
@@ -170,13 +183,13 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
    <p class="eyebrow sidebar-caption">{{ t("邮件") }}</p>
    <nav :aria-label="t('邮件文件夹')"><button :class="{ active: folder === 'inbox' && !unread }" @click="folder = 'inbox'; unread = false; filter()"><Icon name="mail" />{{ t("统一收件箱") }}</button><button :class="{ active: unread }" @click="folder = 'all'; unread = true; filter()"><Icon name="unread" />{{ t("未读邮件") }}</button><button :class="{ active: folder === 'all' && !unread }" @click="folder = 'all'; unread = false; filter()"><Icon name="all" />{{ t("全部邮件") }}</button><button :class="{ active: folder === 'archive' }" @click="folder = 'archive'; unread = false; filter()"><Icon name="archive" />{{ t("已归档") }}</button><button :class="{ active: folder === 'trash' }" @click="folder = 'trash'; unread = false; filter()"><Icon name="trash" />{{ t("废纸篓") }}</button></nav>
    <div class="account-heading"><p class="eyebrow">{{ t("已连接邮箱") }}</p><button class="icon-button" :aria-label="t('添加邮箱')" @click="settings = true">＋</button></div>
-   <button class="account-link" :class="{ active: accountId === 0 }" @click="accountId = 0; filter()"><span class="account-dot all-dot"></span>{{ t("所有邮箱") }}<span class="account-count">{{ stats?.mail.total ?? '—' }}</span></button>
-   <button v-for="(account, index) in accounts" :key="account.id" class="account-link" :class="{ active: accountId === account.id }" @click="accountId = account.id; filter()"><span class="account-dot" :style="{ background: ['#397867', '#c89349', '#6579aa', '#ad6b89'][index % 4] }"></span><span class="truncate">{{ account.display_name || account.email }}</span><span class="account-count">{{ accountCount(account.id) ?? '—' }}</span><span v-if="account.status === 'error'" :title="t('连接失败')">!</span><span v-else-if="account.status === 'paused'" :title="t('已暂停')">Ⅱ</span></button>
+   <button class="account-link" :class="{ active: accountId === 0 }" @click="accountId = 0; filter()"><span class="account-dot all-dot"></span>{{ t("所有邮箱") }}<span class="account-count">{{ accountCount(0) ?? '—' }}</span></button>
+   <div v-for="(account, index) in accounts" :key="account.id" class="account-row"><button class="account-link" :class="{ active: accountId === account.id }" @click="accountId = account.id; filter()"><span class="account-dot" :style="{ background: ['#397867', '#c89349', '#6579aa', '#ad6b89'][index % 4] }"></span><span class="truncate">{{ account.display_name || account.email }}</span><span class="account-count">{{ accountCount(account.id) ?? '—' }}</span></button><button v-if="account.status === 'error' || account.status === 'paused'" class="account-status" :class="account.status" :aria-label="accountStatus(account) + ' · ' + account.email" :title="accountStatus(account) + (account.last_error ? '：' + t(account.last_error) : '') + ' · ' + t('查看连接设置')" @click="connectionDetails(account)"><span class="status-dot"></span><span>{{ account.status === 'paused' ? t('已暂停') : t('待重连') }}</span></button></div>
    <div class="sidebar-footer"><small role="status">{{ connected ? t('● 实时更新已连接') : t('○ 正在连接实时更新') }}</small><button @click="settings = true">{{ t("⚙ 邮箱与连接") }}</button><button @click="mcpOpen = true; sidebarOpen = false">{{ t("◇ AI 与 MCP ") }}<span v-if="pendingApprovals" class="approval-badge">{{ pendingApprovals }}</span></button><button @click="passwordOpen = true; sidebarOpen = false">{{ t("修改登录密码") }}</button><button @click="emit('logout')">{{ t("退出登录") }}</button></div>
   </aside>
   <button v-if="sidebarOpen" class="sidebar-shade" :aria-label="t('关闭导航')" @click="sidebarOpen = false"></button>
   <section class="mail-workspace">
-   <header class="workspace-toolbar"><button class="mobile-menu icon-button" :aria-label="t('打开导航')" @click="sidebarOpen = !sidebarOpen">☰</button><label class="search-box"><Icon name="search" /><input v-model="query" type="search" maxlength="256" :placeholder="t('搜索主题、发件人或验证码')" :aria-label="t('搜索邮件')" @input="search"></label><button class="sync-button" :class="{ syncing }" :disabled="syncing || !accounts.length" :aria-busy="syncing" @click="sync"><Icon name="refresh" /><span>{{ syncing ? t('同步中…') : t('同步') }}</span></button><ThemeSelect /><LanguageToggle /><button class="toolbar-settings icon-button" :aria-label="t('邮箱与连接')" @click="settings = true"><Icon name="settings" /></button></header>
+   <header class="workspace-toolbar"><button class="mobile-menu icon-button" :aria-label="t('打开导航')" @click="sidebarOpen = !sidebarOpen">☰</button><label class="search-box"><Icon name="search" /><input v-model="query" type="search" maxlength="256" :placeholder="t('搜索主题、发件人或验证码')" :aria-label="t('搜索邮件')" @input="search"></label><button class="sync-button" :class="{ syncing }" :disabled="syncing || !accounts.length" :aria-busy="syncing" :aria-label="syncing ? t('同步中…') : t('同步')" :title="syncing ? t('同步中…') : t('同步')" @click="sync"><Icon name="refresh" /></button><ThemeSelect /><LanguageToggle /><button class="toolbar-settings icon-button" :aria-label="t('邮箱与连接')" @click="settings = true"><Icon name="settings" /></button></header>
    <p v-if="notice" class="workspace-notice notice" role="status">{{ t(notice) }}</p>
    <div v-if="error" class="workspace-error error" role="alert">{{ t(error) }} <button class="text-button" @click="loadEmails()">{{ t("重试") }}</button></div>
    <div class="mail-columns" :class="{ 'has-selection': selected }">
@@ -201,6 +214,6 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
   <MCPPanel v-if="mcpOpen" :revision="mcpRevision" @close="mcpOpen = false" @review="reviewId = $event" @changed="refreshMCP" />
   <ApprovalReview v-if="reviewId" :key="reviewId" :id="reviewId" @close="reviewId = null" @changed="refreshMCP" />
   <ChangePassword v-if="passwordOpen" @close="passwordOpen = false" @changed="emit('passwordChanged')" />
-  <AccountPanel v-if="settings" :accounts="accounts" @close="settings = false" @changed="accountsChanged" @saved="accountSaved" />
+  <AccountPanel v-if="settings" :accounts="accounts" :initial-account-id="settingsAccount" @close="settings = false; settingsAccount = null" @changed="accountsChanged" @saved="accountSaved" />
  </div>
 </template>

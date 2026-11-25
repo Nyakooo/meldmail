@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -68,10 +69,22 @@ func (s *Store) Accounts(ctx context.Context) (accounts []Account, resultErr err
 func (s *Store) Account(ctx context.Context, id int64) (Account, error) {
 	return scanAccount(s.DB.QueryRowContext(ctx, "SELECT "+accountColumns+" FROM accounts WHERE id=?", id))
 }
+
+type accountWriter interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 func (s *Store) SaveAccount(ctx context.Context, a Account) (Account, error) {
+	return saveAccount(ctx, s.DB, a)
+}
+func saveAccount(ctx context.Context, writer accountWriter, a Account) (Account, error) {
+	if a.ProxyMode == "" {
+		a.ProxyMode = "direct"
+	}
 	now := time.Now().Unix()
 	if a.ID == 0 {
-		result, err := s.DB.ExecContext(ctx, `INSERT INTO accounts(email,display_name,provider,auth_type,imap_host,imap_port,imap_tls,smtp_host,smtp_port,smtp_tls,credentials_enc,proxy_mode,proxy_url_enc,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.Email, a.DisplayName, a.Provider, a.AuthType, a.IMAPHost, a.IMAPPort, a.IMAPTLS, a.SMTPHost, a.SMTPPort, a.SMTPTLS, a.CredentialsEnc, a.ProxyMode, a.ProxyURLEnc, a.Status, now, now)
+		result, err := writer.ExecContext(ctx, `INSERT INTO accounts(email,display_name,provider,auth_type,imap_host,imap_port,imap_tls,smtp_host,smtp_port,smtp_tls,credentials_enc,proxy_mode,proxy_url_enc,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.Email, a.DisplayName, a.Provider, a.AuthType, a.IMAPHost, a.IMAPPort, a.IMAPTLS, a.SMTPHost, a.SMTPPort, a.SMTPTLS, a.CredentialsEnc, a.ProxyMode, a.ProxyURLEnc, a.Status, now, now)
 		if err != nil {
 			return Account{}, fmt.Errorf("storage insert account: %w", err)
 		}
@@ -81,7 +94,7 @@ func (s *Store) SaveAccount(ctx context.Context, a Account) (Account, error) {
 		}
 		a.ID = id
 	} else {
-		result, err := s.DB.ExecContext(ctx, `UPDATE accounts SET email=?,display_name=?,provider=?,auth_type=?,imap_host=?,imap_port=?,imap_tls=?,smtp_host=?,smtp_port=?,smtp_tls=?,credentials_enc=?,proxy_mode=?,proxy_url_enc=?,status=?,last_error='',updated_at=? WHERE id=?`, a.Email, a.DisplayName, a.Provider, a.AuthType, a.IMAPHost, a.IMAPPort, a.IMAPTLS, a.SMTPHost, a.SMTPPort, a.SMTPTLS, a.CredentialsEnc, a.ProxyMode, a.ProxyURLEnc, a.Status, now, a.ID)
+		result, err := writer.ExecContext(ctx, `UPDATE accounts SET email=?,display_name=?,provider=?,auth_type=?,imap_host=?,imap_port=?,imap_tls=?,smtp_host=?,smtp_port=?,smtp_tls=?,credentials_enc=?,proxy_mode=?,proxy_url_enc=?,status=?,last_error='',updated_at=? WHERE id=?`, a.Email, a.DisplayName, a.Provider, a.AuthType, a.IMAPHost, a.IMAPPort, a.IMAPTLS, a.SMTPHost, a.SMTPPort, a.SMTPTLS, a.CredentialsEnc, a.ProxyMode, a.ProxyURLEnc, a.Status, now, a.ID)
 		if err != nil {
 			return Account{}, fmt.Errorf("storage update account: %w", err)
 		}
@@ -93,7 +106,7 @@ func (s *Store) SaveAccount(ctx context.Context, a Account) (Account, error) {
 			return Account{}, fmt.Errorf("storage update account: %w", sql.ErrNoRows)
 		}
 	}
-	return s.Account(ctx, a.ID)
+	return scanAccount(writer.QueryRowContext(ctx, "SELECT "+accountColumns+" FROM accounts WHERE id=?", a.ID))
 }
 func (s *Store) DeleteAccount(ctx context.Context, id int64) error {
 	result, err := s.DB.ExecContext(ctx, "DELETE FROM accounts WHERE id=?", id)
@@ -120,4 +133,48 @@ func (s *Store) SetAccountStatus(ctx context.Context, id int64, status, diagnost
 		return fmt.Errorf("storage account status: %w", err)
 	}
 	return nil
+}
+
+// MergeAccounts commits a fully validated, locally encrypted configuration as
+// one short transaction. Existing account IDs and their messages are retained.
+func (s *Store) MergeAccounts(ctx context.Context, accounts []Account, globalProxy *string) (added, updated int, resultErr error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("storage import transaction: %w", err)
+	}
+	defer func() {
+		if resultErr != nil {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+				resultErr = errors.Join(resultErr, err)
+			}
+		}
+	}()
+	for _, account := range accounts {
+		existing, err := scanAccount(tx.QueryRowContext(ctx, "SELECT "+accountColumns+" FROM accounts WHERE lower(trim(email))=? ORDER BY id LIMIT 1", strings.ToLower(strings.TrimSpace(account.Email))))
+		if errors.Is(err, sql.ErrNoRows) {
+			account.ID = 0
+			added++
+		} else if err != nil {
+			return 0, 0, err
+		} else {
+			account.ID = existing.ID
+			account.Email = existing.Email
+			if account.DisplayName == "" {
+				account.DisplayName = existing.DisplayName
+			}
+			updated++
+		}
+		if _, err := saveAccount(ctx, tx, account); err != nil {
+			return 0, 0, err
+		}
+	}
+	if globalProxy != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value,updated_at) VALUES('global_proxy_enc',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, *globalProxy, time.Now().Unix()); err != nil {
+			return 0, 0, fmt.Errorf("storage import proxy: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("storage commit import: %w", err)
+	}
+	return added, updated, nil
 }

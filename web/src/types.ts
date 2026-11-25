@@ -17,9 +17,10 @@ export type ComposeAction = 'send' | 'reply' | 'forward'
 export interface MCPToken { id: number; name: string; scope: 'readonly' | 'readwrite'; require_approval: boolean; enabled: boolean; last_used_at: number; created_at: number }
 export interface Approval { id: string; token_id: number; token_name: string; account_id: number; action_type: string; status: string; error_msg: string; created_at: number; expires_at: number; sender_email: string; body_available: boolean; payload: { account_id: number; email_id?: number; action: string; to: string[]; cc?: string[]; subject: string; text?: string; html?: string } }
 export interface AuditEntry { id: number; token_id: number | null; tool_name: string; args_summary: string; status: string; created_at: number }
-export interface AccountCount { id: number; email: string; display_name: string; total: number; unread: number }
+export interface CategoryCounts { inbox: number; all: number; unread: number; archive: number; trash: number }
+export interface AccountCount { categories: CategoryCounts; id: number; email: string; display_name: string; total: number; unread: number }
 export interface SystemStats {
- mail: { total: number; unread: number; accounts: AccountCount[] };
+ mail: { categories: CategoryCounts; total: number; unread: number; accounts: AccountCount[] };
  resources: {
   timestamp: number;
   memory: { used_bytes: number; limit_bytes: number | null; source: string };
