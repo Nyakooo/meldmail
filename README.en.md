@@ -193,6 +193,8 @@ Open **Accounts & connections** after signing in. Enter the address and applicat
 
 Each mailbox chooses its own connection, and **new mailboxes default to direct connections**. Configure an HTTP, HTTPS or SOCKS5 URL only for mailboxes that need a proxy. To reuse one URL, save it under **Accounts & connections → Shared proxy (optional)**, then explicitly select **Use shared proxy** for those mailboxes. Shared proxy edits do not affect direct or mailbox-specific connections. Connectivity tests exercise the path **from the container to the provider**, not from your browser to Gmail. Inside Docker, `127.0.0.1` refers to the container itself; a host proxy needs an address reachable from that container.
 
+Reopening an editor restores the complete saved proxy URL for review and editing, without requiring a new mailbox app password.
+
 - TLS failures or connection resets happen before authentication; they do not by themselves prove the password is wrong.
 - If the host connects but the container cannot, check DNS, IPv4/IPv6 and proxy reachability separately.
 - Trash and archived messages can be restored to Inbox. Move operations stay disabled while awaiting provider confirmation to prevent duplicate submissions.

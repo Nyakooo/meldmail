@@ -118,6 +118,26 @@ func TestAccountRoutes(t *testing.T) {
 	if w.Code != 200 || strings.Contains(w.Body.String(), "proxy-secret") {
 		t.Fatal("proxy secret exposed", w.Code)
 	}
+	for _, endpoint := range []string{"/api/settings/proxy/edit", path + "/proxy"} {
+		if response := request("GET", endpoint, "", nil); response.Code != http.StatusUnauthorized {
+			t.Fatal("proxy editing requires authentication", response.Code)
+		}
+	}
+	w = request("GET", "/api/settings/proxy/edit", "", cookie)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "proxy-secret") || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("saved shared proxy not available for editing", w.Code)
+	}
+	w = request("PUT", path, `{"email":"test@163.com","provider":"163","proxy_mode":"socks5","proxy_url":"socks5://user:account-secret@localhost:1080"}`, cookie)
+	if w.Code != 200 || strings.Contains(w.Body.String(), "account-secret") {
+		t.Fatal("account proxy summary leaks credentials", w.Code)
+	}
+	w = request("GET", path+"/proxy", "", cookie)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "socks5://user:account-secret@localhost:1080") || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("saved account proxy not available for editing", w.Code)
+	}
+	if response := request("GET", "/api/accounts/999999/proxy", "", cookie); response.Code != 404 {
+		t.Fatal("missing account proxy", response.Code)
+	}
 	if w := request("POST", "/api/accounts/999999/sync", "", cookie); w.Code != 404 {
 		t.Fatal("missing account sync should return 404", w.Code)
 	}

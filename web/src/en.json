@@ -327,6 +327,7 @@
   "留空可清除共用代理": "Leave empty to clear the shared proxy",
   "填写后，可让需要代理的邮箱主动选择复用。清空后，选择共用代理的邮箱将恢复直连。": "Mailboxes that need a proxy can opt in to reuse this URL. Clearing it restores direct connections for those mailboxes.",
   "保存共用代理": "Save shared proxy",
+  "无法读取已保存的代理地址": "Unable to load the saved proxy URL",
   "共用代理已更新": "Shared proxy updated",
   "直接连接（推荐）": "Direct connection (recommended)",
   "使用共用代理": "Use shared proxy",

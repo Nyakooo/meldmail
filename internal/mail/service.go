@@ -168,6 +168,19 @@ func (s *Service) Credentials(a storage.Account) (auth.Credentials, error) {
 	}
 	return credentials, nil
 }
+
+// AccountProxyURL decrypts the saved endpoint for dialing and authenticated editing.
+func (s *Service) AccountProxyURL(account storage.Account) (string, error) {
+	if len(account.ProxyURLEnc) == 0 {
+		return "", nil
+	}
+	plain, err := s.Cipher.Decrypt(account.ProxyURLEnc)
+	if err != nil {
+		return "", fmt.Errorf("account proxy decrypt: %w", err)
+	}
+	defer clear(plain)
+	return string(plain), nil
+}
 func (s *Service) GlobalProxy(ctx context.Context) (string, error) {
 	value, err := s.Store.Setting(ctx, "global_proxy_enc")
 	if errors.Is(err, sql.ErrNoRows) {
@@ -215,13 +228,9 @@ func (s *Service) Dialer(ctx context.Context, a storage.Account) (*proxy.Dialer,
 			return nil, err
 		}
 	}
-	endpoint := ""
-	if len(a.ProxyURLEnc) > 0 {
-		plain, err := s.Cipher.Decrypt(a.ProxyURLEnc)
-		if err != nil {
-			return nil, err
-		}
-		endpoint = string(plain)
+	endpoint, err := s.AccountProxyURL(a)
+	if err != nil {
+		return nil, err
 	}
 	return proxy.New(mode, endpoint, global)
 }

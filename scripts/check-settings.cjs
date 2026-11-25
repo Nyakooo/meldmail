@@ -6,7 +6,7 @@ const { chromium } = require(process.env.MELDMAIL_PLAYWRIGHT_MODULE || '/tmp/mel
 const root = resolve(__dirname, '../internal/api/dist');
 const accounts = [
  { id: 1, email: 'one@gmail.com', display_name: 'One', provider: 'gmail', auth_type: 'password', imap_host: 'imap.gmail.com', imap_port: 993, imap_tls: 'implicit', smtp_host: 'smtp.gmail.com', smtp_port: 465, smtp_tls: 'implicit', proxy_mode: 'global', status: 'error', last_error: 'TLS 连接或证书校验失败，尚未验证授权码；请检查网络与代理', last_sync_at: 1 },
- { id: 2, email: 'two@qq.com', display_name: 'Two', provider: 'qq', auth_type: 'password', imap_host: 'imap.qq.com', imap_port: 993, imap_tls: 'implicit', smtp_host: 'smtp.qq.com', smtp_port: 465, smtp_tls: 'implicit', proxy_mode: 'direct', status: 'active', last_error: '', last_sync_at: 1 }
+ { id: 2, email: 'two@qq.com', display_name: 'Two', provider: 'qq', auth_type: 'password', imap_host: 'imap.qq.com', imap_port: 993, imap_tls: 'implicit', smtp_host: 'smtp.qq.com', smtp_port: 465, smtp_tls: 'implicit', proxy_mode: 'socks5', status: 'active', last_error: '', last_sync_at: 1 }
 ];
 const emails = [[1,'inbox',false],[1,'inbox',true],[1,'archive',false],[1,'other',true],[1,'trash',false],[2,'inbox',false],[2,'archive',true],[2,'trash',true]].map(([account_id,folder_role,is_read],i)=>({id:i+1,account_id,folder_id:i+1,folder_role,is_read,is_starred:false,uid:i+1,subject:`Message ${i+1}`,from_name:'Sender',from_addr:'sender@example.com',snippet:'Fixture message',has_attachments:false,date:1700000000+i,to_addrs:'[]',cc_addrs:'[]'}));
 const streams = new Set(); let importCalls = 0; let exportCalls = 0; let defaultProxy = '';
@@ -20,6 +20,8 @@ const server = createServer(async(req,res)=>{
  if(path==='/api/auth/me')return reply({authenticated:true});
  if(path==='/api/events'){res.writeHead(200,{'Content-Type':'text/event-stream'});res.write(': ready\n\n');streams.add(res);req.on('close',()=>streams.delete(res));return;}
  if(path==='/api/accounts'&&req.method==='GET')return reply(accounts);
+ if(path==='/api/settings/proxy/edit')return reply({url:defaultProxy});
+ if(path==='/api/accounts/2/proxy')return reply({url:'socks5://user:saved-secret@proxy.example:1080'});
  if(path==='/api/settings/proxy'){if(req.method==='PUT'){let data='';for await(const chunk of req)data+=chunk;defaultProxy=JSON.parse(data).url;}return reply({url:defaultProxy});}
  if(['/api/mcp/approvals','/api/mcp/tokens','/api/mcp/audit'].includes(path))return reply([]);
  if(path==='/api/stats')return reply({mail:summary(),resources:{timestamp:1,memory:{used_bytes:1,limit_bytes:268435456,source:'container'},cpu:{percent:null,limit_cores:.5},disk:{available:true,data_bytes:1,volume_known:false}}});
@@ -68,7 +70,15 @@ const server = createServer(async(req,res)=>{
  await page.getByRole('button',{name:'连接暂不可用 · one@gmail.com',exact:true}).click();
  const panel=page.getByRole('dialog',{name:'邮箱与连接',exact:true});await panel.getByRole('heading',{name:'编辑邮箱',exact:true}).waitFor();
  if(!await panel.getByText('连接暂不可用',{exact:false}).count())throw Error('connection explanation missing');
+ const bounds=()=>panel.evaluate(el=>{const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}});
+ const frame=await bounds();
+ const stable=async()=>{if(JSON.stringify(await bounds())!==JSON.stringify(frame))throw Error('settings frame moved while switching content');};
+ await panel.locator('.saved-accounts li').nth(1).getByRole('button').first().click();
+ await page.waitForFunction(()=>[...document.querySelectorAll('input')].some(el=>el.value==='socks5://user:saved-secret@proxy.example:1080'));
+ await stable();
+ await panel.locator('.saved-accounts li').first().getByRole('button').first().click();
  await panel.getByRole('combobox',{name:/^连接方式/}).selectOption('socks5');
+ await stable();
  if(await panel.getByLabel('代理 URL',{exact:true}).getAttribute('type')!=='text')throw Error('account proxy URL still masked');
  if(await panel.locator('.global-proxy-panel').count())throw Error('default proxy duplicated in mailbox form');
  await panel.getByRole('combobox',{name:/^连接方式/}).selectOption('direct');
@@ -78,6 +88,11 @@ const server = createServer(async(req,res)=>{
  await panel.getByLabel('共用代理 URL',{exact:true}).fill('http://proxy.example:7890');
  await panel.getByRole('button',{name:'保存共用代理',exact:true}).click();
  await panel.getByRole('status').filter({hasText:'共用代理已更新'}).waitFor();
+ await stable();
+ await panel.getByRole('button',{name:'导入 / 导出',exact:true}).click();await stable();
+ await panel.getByRole('button',{name:'共用代理（可选）',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('.global-proxy-panel input')?.value==='http://proxy.example:7890');
+ await stable();
  await panel.locator('.saved-accounts li').first().getByRole('button').first().click();
  await panel.getByRole('combobox',{name:/^连接方式/}).locator('option:checked').filter({hasText:'使用共用代理'}).waitFor({state:'attached'});
 
@@ -102,6 +117,18 @@ const server = createServer(async(req,res)=>{
  if(await panel.evaluate(el=>el.getBoundingClientRect().width>innerWidth||el.scrollWidth>el.clientWidth))throw Error('mobile panel overflow');
  const mobileY=await cards.evaluateAll(items=>items.map(el=>el.getBoundingClientRect().y));if(mobileY[0]>=mobileY[1])throw Error('mobile cards not stacked');
  await page.screenshot({path:'/tmp/meldmail-settings-mobile.png'});
+ for(const viewport of [{width:1024,height:600},{width:390,height:844}]){
+  await page.setViewportSize(viewport);
+  await panel.locator('.saved-accounts li').nth(1).getByRole('button').first().click();
+  await page.waitForFunction(()=>[...document.querySelectorAll('input')].some(el=>el.value==='socks5://user:saved-secret@proxy.example:1080'));
+  const select=panel.getByRole('combobox',{name:/^连接方式/});await select.scrollIntoViewIfNeeded();
+  const dimensions=await select.evaluate(el=>{const r=el.getBoundingClientRect();return {width:r.width,bottom:r.bottom,height:innerHeight}});
+  if(dimensions.width<180||dimensions.bottom>dimensions.height)throw Error('proxy selector clipped '+JSON.stringify(dimensions));
+  const before=await bounds();await select.selectOption('direct');
+  if(JSON.stringify(await bounds())!==JSON.stringify(before))throw Error('small viewport frame jumped');
+  const save=panel.getByRole('button',{name:'保存邮箱',exact:true});
+  if(!await save.isVisible()||await save.evaluate(el=>el.getBoundingClientRect().bottom>innerHeight))throw Error('settings actions outside viewport');
+ }
  await panel.getByRole('button',{name:'关闭设置',exact:true}).click();await page.setViewportSize({width:1440,height:900});
  await page.getByRole('button',{name:'修改登录密码',exact:true}).click();
  const password=page.getByRole('dialog',{name:'修改登录密码',exact:true});
@@ -113,6 +140,12 @@ const server = createServer(async(req,res)=>{
  await page.getByRole('button',{name:/AI 与 MCP/}).click();
  const mcp=page.getByRole('dialog',{name:'AI 与 MCP',exact:true});await mcp.waitFor();
  if(await mcp.evaluate(el=>el.getBoundingClientRect().width)<900)throw Error('MCP modal too narrow');
+ const mcpFrame=()=>mcp.evaluate(el=>{const r=el.getBoundingClientRect();return [r.x,r.y,r.width,r.height]});
+ const initialMCP=await mcpFrame();
+ for(const button of await mcp.locator('.mcp-tabs button').all()){
+  await button.click();if(JSON.stringify(await mcpFrame())!==JSON.stringify(initialMCP))throw Error('MCP tab resized modal');
+ }
+
  await mcp.getByRole('button',{name:'关闭 MCP 设置',exact:true}).click();
  await page.getByRole('button',{name:'切换为深色',exact:true}).click();
  await page.getByRole('button',{name:'⚙ 邮箱与连接',exact:true}).click();
