@@ -2,12 +2,14 @@
   <img src="assets/brand/meldmail-mark.svg" alt="MeldMail Logo" width="72" height="45">
 </p>
 <h1 align="center">MeldMail</h1>
-<p align="center">自托管多邮箱客户端 · Go + Vue 3 + SQLite · 单容器部署</p>
+<p align="center">自托管多邮箱客户端 · 每个邮箱独立配置代理 · 单容器部署</p>
 <p align="center">
   <strong>简体中文</strong> · <a href="README.en.md">English</a>
   <br>
   <a href="#快速部署">快速部署</a> · <a href="docs/OPERATIONS.md">部署与运维</a>
 </p>
+
+**每个邮箱可以走不同的网络。** 例如，Gmail 走 SOCKS5 代理，QQ 邮箱直连，工作邮箱走另一条 HTTP(S) CONNECT 代理。新邮箱默认直连，也可按需选择共用代理。[代理配置说明](docs/OPERATIONS.md#添加邮箱与代理)
 
 ![MeldMail 桌面端明暗主题预览](docs/design/desktop-light-dark.svg)
 
@@ -15,7 +17,7 @@
 
 ## 功能
 
-- 统一收件箱与搜索，支持后台 IMAP 同步、实时更新和按邮箱配置代理。
+- 统一收件箱与搜索，支持后台 IMAP 同步和实时更新。
 - 阅读、发送、回复、转发和流式附件下载。正文链接在新标签页打开。
 - 支持归档、恢复、单封彻底删除和按邮箱清空废纸篓。
 - MCP 提供可撤销的访问令牌、发信审批和审计日志。
@@ -39,7 +41,10 @@ openssl rand -hex 32
 MELDMAIL_HTTP_PORT=18085
 MELDMAIL_MASTER_KEY=填入刚生成的64位十六进制密钥
 MELDMAIL_ADMIN_PASSWORD='设置一个强密码'
+# MELDMAIL_HOST_PROXY_PORT=7890
 ```
+
+`MELDMAIL_HOST_PROXY_PORT` 是可选项，用于 Linux 部署服务器本机的 HTTP 或混合代理端口。只有选择「使用共用代理」的邮箱才会使用它。每个邮箱的独立代理在网页里配置。[宿主机代理配置](docs/OPERATIONS.md#宿主机代理端口linux可选)
 
 密码最多 **72 字节**，不是 72 个汉字。用单引号包住密码，可避免 `$`、`#` 等字符被 Compose 插值或解释为注释。不要将 `.env` 加入 Git。
 

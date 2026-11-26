@@ -2,12 +2,14 @@
   <img src="assets/brand/meldmail-mark.svg" alt="MeldMail logo" width="72" height="45">
 </p>
 <h1 align="center">MeldMail</h1>
-<p align="center">Self-hosted email client · Go + Vue 3 + SQLite · One container</p>
+<p align="center">Self-hosted multi-account email · Per-account proxies · One container</p>
 <p align="center">
   <a href="README.md">简体中文</a> · <strong>English</strong>
   <br>
   <a href="#quick-deployment">Quick start</a> · <a href="docs/OPERATIONS.en.md">Operations</a>
 </p>
+
+**Route each mailbox independently.** For example, connect Gmail through a SOCKS5 proxy, keep QQ Mail direct, and use another HTTP(S) CONNECT proxy for a work mailbox. New mailboxes connect directly by default and can opt into a shared proxy. [Proxy setup](docs/OPERATIONS.en.md#mailboxes-and-proxies)
 
 ![MeldMail desktop Light and Dark preview](docs/design/desktop-light-dark.svg)
 
@@ -15,7 +17,7 @@ Desktop Light and Dark design reference; available features follow the current i
 
 ## Features
 
-- Unified inbox with search, background IMAP sync, live updates, and per-account proxies.
+- Unified inbox with search, background IMAP sync, and live updates.
 - Read, send, reply, forward, and stream attachments. HTTP(S) links open in new tabs.
 - Archive and restore messages, permanently delete individual Trash messages, or empty Trash per account.
 - Control MCP access with revocable tokens, send approvals, and audit logs.
@@ -39,7 +41,10 @@ Edit `.env`: put the generated key in `MELDMAIL_MASTER_KEY` and set the MeldMail
 MELDMAIL_HTTP_PORT=18085
 MELDMAIL_MASTER_KEY=replace_with_the_generated_64_hex_characters
 MELDMAIL_ADMIN_PASSWORD='replace_with_a_strong_password'
+# MELDMAIL_HOST_PROXY_PORT=7890
 ```
+
+`MELDMAIL_HOST_PROXY_PORT` is optional. On Linux, set it to the deployment server’s local HTTP or mixed proxy port. It applies to mailboxes that select **Use shared proxy**. Set dedicated proxies in the web UI. [Host proxy setup](docs/OPERATIONS.en.md#optional-host-proxy-port-linux)
 
 Passwords are limited to **72 bytes**, not 72 Unicode characters. Single quotes preserve characters such as `$` and `#` instead of interpreting them as Compose interpolation or comments. Do not commit `.env`.
 
