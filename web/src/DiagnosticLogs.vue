@@ -11,6 +11,8 @@ const output = ref<HTMLPreElement | null>(null)
 const accountId = ref(0)
 const entries = ref<Array<{ account_id?: number }>>([])
 const busy = ref(false)
+const maximized = ref(false)
+const cleared = ref(false)
 const error = ref('')
 const notice = ref('')
 const controller = new AbortController()
@@ -25,12 +27,19 @@ async function refresh() {
  notice.value = ''
  try {
   entries.value = await request('/api/settings/logs', { signal: controller.signal })
+  cleared.value = false
   if (output.value) output.value.scrollTop = 0
  } catch (err) {
   if (!controller.signal.aborted) error.value = errorMessage(err)
  } finally {
   busy.value = false
  }
+}
+
+function clear() {
+ entries.value = []
+ cleared.value = true
+ notice.value = ''
 }
 
 async function copy() {
@@ -56,10 +65,13 @@ onBeforeUnmount(() => controller.abort())
 </script>
 
 <template>
- <dialog ref="dialog" class="composer diagnostic-dialog" aria-labelledby="diagnostic-title" @close="emit('close')">
+ <dialog ref="dialog" class="composer diagnostic-dialog" :class="{ maximized }" aria-labelledby="diagnostic-title" @close="emit('close')">
   <header class="panel-heading">
    <h2 id="diagnostic-title">{{ t('诊断日志') }}</h2>
-   <button class="icon-button" :aria-label="t('关闭诊断日志')" @click="dialog?.close()">✕</button>
+   <div class="diagnostic-actions">
+    <button class="secondary" @click="maximized = !maximized">{{ t(maximized ? '还原窗口' : '最大化查看') }}</button>
+    <button class="icon-button" :aria-label="t('关闭诊断日志')" @click="dialog?.close()">✕</button>
+   </div>
   </header>
   <div class="diagnostic-actions">
    <select v-model="accountId" :aria-label="t('筛选邮箱')" @change="notice = ''">
@@ -68,15 +80,23 @@ onBeforeUnmount(() => controller.abort())
    </select>
    <button class="secondary" :disabled="busy" @click="refresh">{{ busy ? t('正在读取…') : t('刷新日志') }}</button>
    <button class="secondary" :disabled="!visibleLogs" @click="copy">{{ t('复制日志') }}</button>
+   <button class="secondary" :disabled="busy || !entries.length" @click="clear">{{ t('清屏') }}</button>
   </div>
   <p class="diagnostic-caption">{{ t('最近 100 条 · 最新优先') }}</p>
   <p v-if="error" class="error" role="alert">{{ t(error) }}</p>
-  <pre ref="output" class="diagnostic-output" tabindex="0" :aria-label="t('诊断日志')" :aria-busy="busy">{{ visibleLogs || (busy ? t('正在读取…') : error ? '' : t('暂无匹配的诊断日志')) }}</pre>
+  <pre ref="output" class="diagnostic-output" tabindex="0" :aria-label="t('诊断日志')" :aria-busy="busy">{{ visibleLogs || (busy ? t('正在读取…') : error || cleared ? '' : t('暂无匹配的诊断日志')) }}</pre>
   <div class="diagnostic-notice" role="status">{{ t(notice) }}</div>
  </dialog>
 </template>
 
 <style scoped>
+.diagnostic-dialog.maximized[open] {
+ width: 100vw;
+ max-width: 100vw;
+ height: 100dvh;
+ max-height: 100dvh;
+ border-radius: 0;
+}
 .diagnostic-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .diagnostic-actions select { max-width: 100%; min-width: 0; }
 .diagnostic-caption, .diagnostic-notice { color: var(--muted); font-size: 12px; }

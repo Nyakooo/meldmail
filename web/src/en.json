@@ -1,4 +1,7 @@
 {
+  "最大化查看": "Maximize",
+  "还原窗口": "Restore window",
+  "清屏": "Clear screen",
   "关闭诊断日志": "Close diagnostic logs",
   "刷新日志": "Refresh logs",
   "复制日志": "Copy logs",
