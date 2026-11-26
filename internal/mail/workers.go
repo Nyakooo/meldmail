@@ -23,7 +23,7 @@ func (s *Service) AccountsChanged() {
 	}
 }
 func (s *Service) NewWorkers(options syncer.Options) *syncer.Manager {
-	return syncer.NewManager(syncer.Backend{Accounts: s.workerAccounts, Sync: s.Sync, Watch: s.watchAccount, Reconcile: s.reconcileAccount, Status: s.workerStatus}, options)
+	return syncer.NewManager(syncer.Backend{Accounts: s.workerAccounts, Sync: s.syncInBackground, Watch: s.watchAccount, Reconcile: s.reconcileAccount, Status: s.workerStatus}, options)
 }
 func (s *Service) workerAccounts(ctx context.Context) ([]syncer.Account, error) {
 	accounts, err := s.Store.Accounts(ctx)

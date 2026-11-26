@@ -54,6 +54,14 @@ let countRefreshTimer: ReturnType<typeof setTimeout> | undefined
 let statsRequest: AbortController | undefined
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 const connected = ref(false)
+const background = ref<{ syncing: number; prefetch: { account_id: number; subject: string } | null }>({ syncing: 0, prefetch: null })
+const backgroundMessage = computed(() => {
+ if (!connected.value) return t('正在连接后台状态…')
+ const { prefetch, syncing } = background.value
+ if (prefetch) return `${t('正在预取正文')} · ${accountName(prefetch.account_id)} · ${prefetch.subject || t('（无主题）')}`
+ if (syncing) return t('正在同步邮件列表…')
+ return t('后台空闲')
+})
 let events: EventSource | undefined
 let sequence = 0
 let activeRequest: AbortController | undefined
@@ -174,7 +182,13 @@ function openMCP(tab: 'tokens' | 'approvals') {
 function startEvents() {
  events = new EventSource('/api/events')
  events.onopen = () => { connected.value = true; scheduleRefresh(); void refreshMCP() }
- events.onerror = () => { connected.value = false }
+ events.onerror = () => {
+  connected.value = false
+  background.value = { syncing: 0, prefetch: null }
+ }
+ events.addEventListener('background_activity', (event: MessageEvent<string>) => {
+  try { background.value = JSON.parse(event.data) } catch { background.value = { syncing: 0, prefetch: null } }
+ })
  events.addEventListener('new_email', (event: MessageEvent<string>) => {
   try { const email = JSON.parse(event.data) as Email & { from_sync?: boolean }
    if (email.from_sync && email.folder_role === 'inbox' && !email.is_read && email.date >= Date.now() / 1000 - 300) {
@@ -227,7 +241,15 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
    <div v-if="error" class="workspace-error error" role="alert">{{ t(error) }} <button class="text-button" @click="loadEmails()">{{ t("重试") }}</button></div>
    <div class="mail-columns" :class="{ 'has-selection': selected }">
     <section class="message-list" :aria-label="t('邮件列表')">
-     <header class="list-heading"><div><p class="eyebrow">{{ accountId ? accountName(accountId) : t('所有邮箱') }}</p><h1>{{ heading }}</h1><small class="filtered-total">{{ t("当前筛选共 ") }}{{ total }}{{ t(" 封") }}</small></div></header>
+     <header class="list-heading">
+      <div class="list-heading-title">
+       <Icon :name="unread ? 'unread' : ({ inbox: 'mail', all: 'all', archive: 'archive', trash: 'trash' }[folder] || 'all')" />
+       <h1>{{ heading }}</h1>
+      </div>
+      <span class="list-heading-count" :title="t('当前筛选共 ') + total + t(' 封')">
+       {{ total.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') }}{{ t(' 封') }}
+      </span>
+     </header>
      <div class="mobile-account-filter"><select v-model="accountId" :aria-label="t('筛选邮箱')" @change="filter"><option :value="0">{{ t("所有邮箱") }}</option><option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.display_name || a.email }}</option></select></div>
      <p v-if="loading && !emails.length" class="list-status" role="status">{{ t("正在加载邮件…") }}</p>
      <div v-else-if="!emails.length" class="empty-list"><div class="empty-symbol">✉</div><h2>{{ accounts.length ? t('这里很安静') : t('从连接一个邮箱开始') }}</h2><p>{{ query ? t('没有找到匹配邮件，试试其他关键词。') : accounts.length ? t('暂无符合条件的邮件。你可以同步邮箱，或调整筛选条件。') : t('把工作与生活的来信，汇集在一个地方。') }}</p><button v-if="!accounts.length" class="primary" @click="settings = 'account'">{{ t("＋ 连接邮箱") }}</button></div>
@@ -238,6 +260,10 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
      <MessageReader v-if="selected" :email="selected" :account-name="accountName(selected.account_id)" @back="selected = null" @flags="applyFlags" @compose="compose" />
      <div v-else class="reader-empty"><img src="/meldmail-mark.svg" alt="" class="empty-mark"><h2>{{ t("选择一封邮件") }}</h2><p>{{ t("在这里阅读、回复和处理来信。") }}</p></div>
     </section>
+   </div>
+   <div class="background-activity" role="status">
+    <span class="status-dot" :class="{ active: connected && (background.prefetch || background.syncing) }" aria-hidden="true"></span>
+    <span class="truncate" :title="backgroundMessage">{{ backgroundMessage }}</span>
    </div>
    <SystemStats :stats="stats" :unavailable="statsUnavailable" />
   </section>

@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"github.com/emersion/go-imap/v2"
 	"github.com/nyakooo/meldmail/internal/storage"
@@ -68,6 +69,48 @@ func TestBodySavedAndReadLocallyAfterReopen(t *testing.T) {
 	if !strings.Contains(persisted, "Local after first view") || strings.Contains(persisted, "neverCacheThisScript") {
 		t.Fatal("stored body was not sanitized")
 	}
+	prefetchRaw := strings.Replace(raw, "cache fixture", "prefetch fixture", 1)
+	if _, err := fixture.User.Append("INBOX", strings.NewReader(prefetchRaw), &imap.AppendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Sync(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := store.BodyPrefetchCandidates(ctx)
+	if err != nil || len(candidates) != 1 || candidates[0] == id {
+		t.Fatalf("expected one uncached prefetch candidate: %v %v", candidates, err)
+	}
+	events, unsubscribe, err := service.Events.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
+	if !service.prefetchBody(ctx, candidates[0]) {
+		t.Fatal("prefetch yielded without a foreground reader")
+	}
+	for _, active := range []bool{true, false} {
+		select {
+		case event := <-events:
+			var activity BackgroundActivity
+			if err := json.Unmarshal(event.Data, &activity); err != nil {
+				t.Fatal(err)
+			}
+			if event.Type != "background_activity" || (activity.Prefetch != nil) != active {
+				t.Fatal("unexpected prefetch activity state", event.Type)
+			}
+			if active && (activity.Prefetch.AccountID != a.ID || activity.Prefetch.Subject != "prefetch fixture") {
+				t.Fatal("incorrect prefetch activity metadata")
+			}
+		default:
+			t.Fatal("missing prefetch activity event")
+		}
+	}
+	prefetchedID := candidates[0]
+	candidates, err = store.BodyPrefetchCandidates(ctx)
+	if err != nil || len(candidates) != 0 {
+		t.Fatalf("prefetched message was not removed from candidates: %v %v", candidates, err)
+	}
+
 	if err := store.DB.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -95,6 +138,10 @@ func TestBodySavedAndReadLocallyAfterReopen(t *testing.T) {
 	}
 	if err != nil || !second.Local || second.HTML != first.HTML || network.Load() != 0 {
 		t.Fatalf("reopened service accessed network or lost body: %v", err)
+	}
+	prefetched, err := service.Read(ctx, prefetchedID)
+	if err != nil || !prefetched.Local || prefetched.IsRead || prefetched.HTML != first.HTML || network.Load() != 0 {
+		t.Fatalf("prefetched body was not available locally, sanitized and still unread: %v", err)
 	}
 	started, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() {

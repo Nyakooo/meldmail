@@ -37,7 +37,7 @@ func (b *Broker) Subscribe() (chan Event, func(), error) {
 }
 func (b *Broker) Publish(kind string, data interface{}) error {
 	switch kind {
-	case "new_email", "flag_updated", "sync_status", "mcp_approval_required":
+	case "new_email", "flag_updated", "sync_status", "mcp_approval_required", "background_activity":
 	default:
 		return fmt.Errorf("sse: unknown event")
 	}

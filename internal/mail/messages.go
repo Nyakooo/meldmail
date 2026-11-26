@@ -63,23 +63,44 @@ func (s *Service) Read(ctx context.Context, id int64) (result EmailContent, resu
 func (s *Service) ReadTo(ctx context.Context, id int64, consume func(EmailContent) error) error {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
+	s.prefetchMu.Lock()
+	s.activeReaders++
+	if s.cancelPrefetch != nil {
+		s.cancelPrefetch()
+	}
+	s.prefetchMu.Unlock()
+	defer func() {
+		s.prefetchMu.Lock()
+		s.activeReaders--
+		s.prefetchMu.Unlock()
+	}()
 	select {
 	case s.bodyMemory <- struct{}{}:
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 	defer func() { <-s.bodyMemory }()
-	content, err := s.readBody(ctx, id)
+	content, err := s.readBody(ctx, id, false)
 	if err != nil {
 		return err
 	}
 	return consume(content)
 }
 
-func (s *Service) readBody(ctx context.Context, id int64) (result EmailContent, resultErr error) {
+func (s *Service) readBody(ctx context.Context, id int64, prefetch bool) (result EmailContent, resultErr error) {
 	e, account, folder, err := s.emailSource(ctx, id)
 	if err != nil {
 		return result, err
+	}
+	if prefetch {
+		if account.Status != "active" || e.IsRead || folder.Role != "inbox" {
+			return result, nil
+		}
+		release, err := s.Limiter.Acquire(ctx, account.ID)
+		if err != nil {
+			return result, err
+		}
+		defer release()
 	}
 	source, err := bodySource(e, account, folder)
 	if err != nil {
@@ -105,6 +126,12 @@ func (s *Service) readBody(ctx context.Context, id int64) (result EmailContent, 
 		return result, err
 	}
 	defer release()
+	if prefetch {
+		s.updateBackgroundActivity(func(activity *BackgroundActivity) {
+			activity.Prefetch = &BodyPrefetch{AccountID: account.ID, Subject: e.Subject}
+		})
+		defer s.updateBackgroundActivity(func(activity *BackgroundActivity) { activity.Prefetch = nil })
+	}
 	e, account, f, c, err := s.openEmail(ctx, id)
 	if err != nil {
 		return result, err
@@ -116,6 +143,9 @@ func (s *Service) readBody(ctx context.Context, id int64) (result EmailContent, 
 	}()
 	content, err := c.Read(ctx, e, f)
 	if err != nil {
+		return result, err
+	}
+	if err := ctx.Err(); err != nil {
 		return result, err
 	}
 	var sanitized bytes.Buffer

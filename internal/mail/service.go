@@ -12,6 +12,7 @@ import (
 	"net"
 	netmail "net/mail"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
@@ -27,17 +28,23 @@ import (
 )
 
 type Service struct {
-	HostProxyURL string // Immutable after startup; supplied by deployment configuration.
-	Store        *storage.Store
-	Cipher       *secret.Cipher
-	Limiter      *syncer.Limiter
-	TLSConfig    *tls.Config
-	Events       *sse.Broker
-	Workers      *syncer.Manager
-	interactive  chan struct{}
-	bodyMemory   chan struct{}
-	flagWake     chan struct{}
-	configWork   chan struct{}
+	activityMu     sync.Mutex
+	activity       BackgroundActivity
+	HostProxyURL   string // Immutable after startup; supplied by deployment configuration.
+	Store          *storage.Store
+	Cipher         *secret.Cipher
+	Limiter        *syncer.Limiter
+	TLSConfig      *tls.Config
+	Events         *sse.Broker
+	Workers        *syncer.Manager
+	interactive    chan struct{}
+	bodyMemory     chan struct{}
+	prefetchWake   chan struct{}
+	prefetchMu     sync.Mutex
+	cancelPrefetch context.CancelFunc
+	activeReaders  int
+	flagWake       chan struct{}
+	configWork     chan struct{}
 }
 
 func New(store *storage.Store, key []byte) (*Service, error) {
@@ -45,7 +52,7 @@ func New(store *storage.Store, key []byte) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{Store: store, Cipher: cipher, Limiter: syncer.NewLimiter(), Events: sse.New(), interactive: make(chan struct{}, 3), bodyMemory: make(chan struct{}, 1), flagWake: make(chan struct{}, 1), configWork: make(chan struct{}, 1)}, nil
+	return &Service{Store: store, Cipher: cipher, Limiter: syncer.NewLimiter(), Events: sse.New(), interactive: make(chan struct{}, 3), bodyMemory: make(chan struct{}, 1), prefetchWake: make(chan struct{}, 1), flagWake: make(chan struct{}, 1), configWork: make(chan struct{}, 1)}, nil
 }
 
 type AccountInput struct {
@@ -253,7 +260,15 @@ func (s *Service) Sync(ctx context.Context, id int64) (count int, result error) 
 	if err != nil {
 		return 0, err
 	}
-	defer release()
+	defer func() {
+		release()
+		if result == nil {
+			select {
+			case s.prefetchWake <- struct{}{}:
+			default:
+			}
+		}
+	}()
 	a, err := s.Store.Account(ctx, id)
 	if err != nil {
 		return 0, err

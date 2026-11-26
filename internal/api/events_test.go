@@ -74,8 +74,12 @@ func TestSSEAuthenticationAndStreaming(t *testing.T) {
 	scanner := bufio.NewScanner(response.Body)
 	seenType := false
 	seenData := false
+	seenActivity := false
 	for scanner.Scan() {
 		line := scanner.Text()
+		if line == `data: {"syncing":0,"prefetch":null}` {
+			seenActivity = true
+		}
 		if line == "event: new_email" {
 			seenType = true
 		}
@@ -86,7 +90,7 @@ func TestSSEAuthenticationAndStreaming(t *testing.T) {
 			break
 		}
 	}
-	if !seenType || !seenData {
+	if !seenActivity || !seenType || !seenData {
 		t.Fatal("SSE event not delivered", scanner.Err())
 	}
 }

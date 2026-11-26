@@ -32,13 +32,13 @@ func (s *Service) ChangeFlags(ctx context.Context, id int64, change storage.Flag
 func (s *Service) RunBackground(ctx context.Context) error {
 	child, cancel := context.WithCancel(ctx)
 	defer cancel()
-	done := make(chan error, 2)
+	done := make(chan error, 3)
 	go func() { done <- s.Workers.Run(child) }()
 	go func() { done <- s.runFlagActions(child) }()
+	go func() { s.runBodyPrefetch(child); done <- nil }()
 	first := <-done
 	cancel()
-	second := <-done
-	return errors.Join(first, second)
+	return errors.Join(first, <-done, <-done)
 }
 func (s *Service) runFlagActions(ctx context.Context) error {
 	ticker := time.NewTicker(time.Second)

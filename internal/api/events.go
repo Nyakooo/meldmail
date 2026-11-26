@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -33,6 +34,13 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		return controller.Flush()
 	}
 	if err := send("retry: 2000\n: connected\n\n"); err != nil {
+		return
+	}
+	activity, err := json.Marshal(s.mail.BackgroundActivity())
+	if err != nil {
+		return
+	}
+	if err := send(fmt.Sprintf("event: background_activity\ndata: %s\n\n", activity)); err != nil {
 		return
 	}
 	heartbeat := time.NewTicker(15 * time.Second)

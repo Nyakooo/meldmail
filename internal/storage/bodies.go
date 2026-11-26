@@ -75,3 +75,29 @@ SELECT email_id FROM (
 	}
 	return nil
 }
+
+func (s *Store) BodyPrefetchCandidates(ctx context.Context) ([]int64, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT recent.id FROM (
+ SELECT e.id, e.date, a.proxy_mode <> 'direct' AS proxied
+ FROM emails e JOIN accounts a ON a.id=e.account_id JOIN folders f ON f.id=e.folder_id
+ WHERE e.is_read=0 AND f.role='inbox' AND a.status='active'
+ ORDER BY proxied DESC, e.date DESC, e.id DESC LIMIT ?
+) recent WHERE NOT EXISTS (SELECT 1 FROM email_bodies b WHERE b.email_id=recent.id)
+ORDER BY recent.proxied DESC, recent.date DESC, recent.id DESC`, 16)
+	if err != nil {
+		return nil, fmt.Errorf("storage list body prefetch candidates: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("storage scan body prefetch candidate: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage iterate body prefetch candidates: %w", err)
+	}
+	return ids, nil
+}

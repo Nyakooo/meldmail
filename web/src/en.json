@@ -1,4 +1,11 @@
 {
+  "返回列表": "Back to list",
+  "显示原始配色": "Show original colors",
+  "使用深色正文": "Use dark message colors",
+  "正在连接后台状态…": "Connecting to background activity…",
+  "正在预取正文": "Prefetching email body",
+  "正在同步邮件列表…": "Syncing email list…",
+  "后台空闲": "Background idle",
   "邮箱已保存": "Account saved",
   "返回设置": "Back to settings",
   "返回 AI 与 MCP": "Back to AI and MCP",
