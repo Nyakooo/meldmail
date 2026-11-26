@@ -2,7 +2,7 @@
 import AccountTransfer from './AccountTransfer.vue'
 import Icon from './Icon.vue'
 import { t } from './i18n'
-import { ref, reactive, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import type { Account, Diagnostic } from './types'
 import { request, errorMessage } from './http'
 const props = defineProps<{ accounts: Account[]; initialAccountId?: number | null; section: 'account' | 'transfer' | 'proxy' }>()
@@ -37,6 +37,8 @@ async function loadProxy(path: string, target: 'account' | 'proxy') {
 }
 
 const form = reactive({ email: '', display_name: '', provider: 'gmail', auth_type: 'password', password: '', access_token: '', imap_host: '', imap_port: 993, imap_tls: 'implicit', smtp_host: '', smtp_port: 465, smtp_tls: 'implicit', proxy_mode: 'direct', proxy_url: '', status: 'active' })
+const hasSavedCredential = computed(() => editing.value !== null && form.auth_type === savedAuthType.value)
+const credentialMask = '••••••••'
 function reset() {
  cancelProxyRead()
  void nextTick(() => { if (accountBody.value) accountBody.value.scrollTop = 0 })
@@ -79,7 +81,7 @@ async function save() {
 function validateCredentials() {
  if (!form.email.trim()) { error.value = t('请先填写完整邮箱地址'); return false }
  const credential = form.auth_type === 'password' ? String(payload().password).trim() : form.access_token.trim()
- if ((editing.value === null || form.auth_type !== savedAuthType.value) && !credential) {
+ if (!hasSavedCredential.value && !credential) {
   error.value = form.auth_type === 'oauth2' ? t('请填写新的 Access Token；切换认证方式后不能沿用原凭据。') : form.provider === 'qq' ? t('请填写 QQ 邮箱授权码；在 QQ 邮箱网页设置中开启 IMAP/SMTP 服务后生成，不是 QQ 登录密码。') : t('请填写邮箱授权码或应用专用密码。')
   notice.value = ''; return false
  }
@@ -156,9 +158,10 @@ onMounted(() => {
      <p v-if="form.auth_type === 'oauth2'" class="field-hint">{{ t("此选项需要你自行取得有效的 Access Token，暂不提供授权跳转或自动续期。Gmail 首次接入请优先选择“密码 / 授权码”，按上方步骤生成应用专用密码。") }}</p>
      <div class="account-fields"><label>{{ t("邮箱地址") }}<input v-model="form.email" type="email" autocomplete="off" required maxlength="320" :placeholder="form.provider === 'gmail' ? t('例如：yourname@gmail.com') : t('输入完整邮箱地址')"></label>
      <label>{{ t("显示名称（可选）") }}<input v-model="form.display_name" maxlength="256" :placeholder="t('例如：工作邮箱')"></label>
-     <label v-if="form.auth_type === 'password'">{{ form.provider === 'gmail' ? t('Google 应用专用密码') : t('密码或应用授权码') }}<input v-model="form.password" type="password" autocomplete="new-password" aria-describedby="mail-password-hint" :placeholder="editing === null ? (form.provider === 'gmail' ? t('粘贴 Google 生成的 16 位密码') : t('输入邮箱授权码')) : t('留空保留现有凭据')"></label>
-     <label v-else>Access Token<input v-model="form.access_token" type="password" autocomplete="off" :placeholder="editing === null ? t('输入现有访问令牌') : t('留空保留现有凭据')"></label>
-     <p v-if="form.auth_type === 'password'" id="mail-password-hint" class="field-hint">{{ form.provider === 'gmail' ? t('填写应用专用密码，不是 Google 登录密码。粘贴时的分组空格会自动去除。') : t('请先在邮箱服务商处开启 IMAP / SMTP，并按要求生成授权码。') }}</p>
+     <label v-if="form.auth_type === 'password'">{{ form.provider === 'gmail' ? t('Google 应用专用密码') : t('密码或应用授权码') }}<input v-model="form.password" type="password" autocomplete="new-password" aria-describedby="mail-password-hint" :placeholder="hasSavedCredential ? credentialMask : (form.provider === 'gmail' ? t('粘贴 Google 生成的 16 位密码') : t('输入邮箱授权码'))"></label>
+     <label v-else>Access Token<input v-model="form.access_token" type="password" autocomplete="off" :aria-describedby="hasSavedCredential ? 'mail-password-hint' : undefined" :placeholder="hasSavedCredential ? credentialMask : t('输入现有访问令牌')"></label>
+     <p v-if="hasSavedCredential" id="mail-password-hint" class="field-hint">{{ t('留空保留现有凭据') }}</p>
+     <p v-else-if="form.auth_type === 'password'" id="mail-password-hint" class="field-hint">{{ form.provider === 'gmail' ? t('填写应用专用密码，不是 Google 登录密码。粘贴时的分组空格会自动去除。') : t('请先在邮箱服务商处开启 IMAP / SMTP，并按要求生成授权码。') }}</p>
      <template v-if="form.provider === 'custom' || editing !== null"><div class="form-row server-row"><label>{{ t("IMAP 主机") }}<input v-model="form.imap_host" required></label><label class="port-field">{{ t("端口") }}<input v-model.number="form.imap_port" type="number" min="1" max="65535" required></label><label>TLS<select v-model="form.imap_tls"><option value="implicit">{{ t("隐式 TLS") }}</option><option value="starttls">STARTTLS</option></select></label></div><div class="form-row server-row"><label>{{ t("SMTP 主机") }}<input v-model="form.smtp_host" required></label><label class="port-field">{{ t("端口") }}<input v-model.number="form.smtp_port" type="number" min="1" max="65535" required></label><label>TLS<select v-model="form.smtp_tls"><option value="implicit">{{ t("隐式 TLS") }}</option><option value="starttls">STARTTLS</option></select></label></div></template>
      <div class="form-row connection-row"><label>{{ t("连接方式") }}<select v-model="form.proxy_mode" :disabled="proxyLoading"><option value="direct">{{ t("直接连接（推荐）") }}</option><option v-if="currentProxy || form.proxy_mode === 'global'" value="global">{{ currentProxy ? t("使用共用代理") : t("共用代理未设置（当前直连）") }}</option><option value="http">{{ t("HTTP 代理") }}</option><option value="https">{{ t("HTTPS 代理") }}</option><option value="socks5">{{ t("SOCKS5 代理") }}</option></select></label><label>{{ t("同步") }}<select v-model="form.status"><option value="active">{{ t("启用") }}</option><option value="paused">{{ t("暂停") }}</option></select></label></div>
      <p class="field-hint">{{ form.proxy_mode === 'global' ? (currentProxy ? t('此邮箱使用共用代理：') + currentProxy : t('共用代理尚未配置，此邮箱当前使用直连。')) : form.proxy_mode === 'direct' ? t('此邮箱直接连接，不受共用代理设置影响。') : t('此代理只用于当前邮箱的收信和发信。') }}</p>
