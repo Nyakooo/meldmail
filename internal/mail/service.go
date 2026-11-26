@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emersion/go-imap/v2"
 	secret "github.com/nyakooo/meldmail/internal/crypto"
 	"github.com/nyakooo/meldmail/internal/mail/adapter"
 	"github.com/nyakooo/meldmail/internal/mail/auth"
@@ -308,8 +309,17 @@ func (s *Service) Test(ctx context.Context, a storage.Account) []Diagnostic {
 	if err != nil {
 		result = append(result, Diagnostic{"imap", false, diagnose(err)})
 	} else {
-		err = c.Close()
-		result = append(result, Diagnostic{"imap", err == nil, "IMAP TLS、认证与服务商适配完成"})
+		_, err = c.IMAP.Select("INBOX", &imap.SelectOptions{ReadOnly: true}).Wait()
+		if err != nil {
+			err = fmt.Errorf("imap select: %w", err)
+			result = append(result, Diagnostic{"imap", false, "IMAP 已认证，但无法读取收件箱"})
+		} else {
+			result = append(result, Diagnostic{"imap", true, "IMAP 已认证，收件箱可读取"})
+		}
+		closeStarted := time.Now()
+		if closeErr := c.Close(); closeErr != nil {
+			logMailOperation(imapCtx, a.ID, "test_imap_close", closeStarted, closeErr, -1)
+		}
 	}
 	logMailOperation(imapCtx, a.ID, "test_imap", imapStarted, err, -1)
 	cancel()

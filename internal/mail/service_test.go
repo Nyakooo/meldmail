@@ -20,6 +20,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
 	"github.com/nyakooo/meldmail/internal/mail/imapclient"
 	"github.com/nyakooo/meldmail/internal/storage"
+	"github.com/nyakooo/meldmail/internal/testmail"
 )
 
 func TestSyncAndDiagnostics(t *testing.T) {
@@ -254,5 +255,32 @@ func TestSyncAndDiagnostics(t *testing.T) {
 	endpoint, err := service.GlobalProxy(ctx)
 	if err != nil || endpoint != "http://proxy-user:proxy-secret@127.0.0.1:8888" {
 		t.Fatal("proxy roundtrip", err)
+	}
+}
+
+func TestConnectionDiagnosticsCheckInbox(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	fixture := testmail.IMAP(t, "test@example.com", "fixture")
+	service, err := New(nil, make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.TLSConfig = fixture.ClientTLS
+	account, err := service.Prepare(ctx, AccountInput{
+		Account: storage.Account{
+			Email: "test@example.com", Provider: "custom", ProxyMode: "direct",
+			IMAPHost: "127.0.0.1", IMAPPort: fixture.Port, IMAPTLS: "implicit",
+			SMTPHost: "127.0.0.1", SMTPPort: fixture.Port, SMTPTLS: "implicit",
+		},
+		Password: "fixture",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.FailNextSelect("INBOX")
+	checks := service.Test(ctx, account)
+	if len(checks) < 2 || checks[1].Stage != "imap" || checks[1].OK || checks[1].Message != "IMAP 已认证，但无法读取收件箱" {
+		t.Fatalf("expected inbox access failure, got %+v", checks)
 	}
 }
