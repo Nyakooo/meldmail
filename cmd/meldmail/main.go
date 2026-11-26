@@ -80,7 +80,7 @@ func run() (result error) {
 	if err := mailService.ConfigureHostProxy(ctx, c.HostProxyURL); err != nil {
 		return err
 	}
-	handler, err := api.New(store, c.TrustProxy, mailService)
+	handler, err := api.New(store, c.TrustProxy, mailService, files)
 	if err != nil {
 		return err
 	}

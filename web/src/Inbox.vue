@@ -5,6 +5,7 @@ import LanguageToggle from './LanguageToggle.vue'
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import AccountPanel from './AccountPanel.vue'
 import ChangePassword from './ChangePassword.vue'
+import DiagnosticLogs from './DiagnosticLogs.vue'
 import SystemStats from './SystemStats.vue'
 import ThemeSelect from './ThemeSelect.vue'
 import MessageReader from './MessageReader.vue'
@@ -14,6 +15,7 @@ import ApprovalReview from './ApprovalReview.vue'
 import type { Account, Email, EmailPage, EmailUpdate, ComposeAction, Approval, SystemStats as StatsData, CategoryCounts } from './types'
 import { request, errorMessage } from './http'
 const emit = defineEmits<{ logout: []; passwordChanged: [] }>()
+const logsOpen = ref(false)
 const accounts = ref<Account[]>([])
 const emails = ref<Email[]>([])
 const accountId = ref(0)
@@ -191,6 +193,7 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
      <button @click="settings = true; sidebarOpen = false"><Icon name="settings" /><span>{{ t('邮箱与连接') }}</span></button>
      <button @click="mcpOpen = true; sidebarOpen = false"><Icon name="code" /><span>{{ t('AI 与 MCP') }}</span><span v-if="pendingApprovals" class="approval-badge">{{ pendingApprovals }}</span></button>
      <button @click="passwordOpen = true; sidebarOpen = false"><Icon name="key" /><span>{{ t('修改登录密码') }}</span></button>
+     <button @click="logsOpen = true; sidebarOpen = false"><Icon name="code" /><span>{{ t('诊断日志') }}</span></button>
      <button class="logout-button" @click="emit('logout')"><Icon name="logout" /><span>{{ t('退出登录') }}</span></button>
     </nav>
    </div>
@@ -221,6 +224,7 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
   <Composer v-if="composing" :accounts="accounts" :action="composing.action" :original="composing.original" @close="composing = null" @sent="notice = t('邮件已发送')" />
   <MCPPanel v-if="mcpOpen" :revision="mcpRevision" @close="mcpOpen = false" @review="reviewId = $event" @changed="refreshMCP" />
   <ApprovalReview v-if="reviewId" :key="reviewId" :id="reviewId" @close="reviewId = null" @changed="refreshMCP" />
+  <DiagnosticLogs v-if="logsOpen" :accounts="accounts" @close="logsOpen = false" />
   <ChangePassword v-if="passwordOpen" @close="passwordOpen = false" @changed="emit('passwordChanged')" />
   <AccountPanel v-if="settings" :accounts="accounts" :initial-account-id="settingsAccount" @close="settings = false; settingsAccount = null" @changed="accountsChanged" @saved="accountSaved" />
  </div>

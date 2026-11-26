@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nyakooo/meldmail/internal/logging"
 	"github.com/nyakooo/meldmail/internal/mail"
 	"github.com/nyakooo/meldmail/internal/mcp"
 	"github.com/nyakooo/meldmail/internal/observe"
@@ -45,7 +46,7 @@ type Server struct {
 	attempts       map[string]attempt
 }
 
-func New(store *storage.Store, trust bool, mailService *mail.Service) (http.Handler, error) {
+func New(store *storage.Store, trust bool, mailService *mail.Service, logs ...*logging.Files) (http.Handler, error) {
 	root, err := fs.Sub(assets, "dist")
 	if err != nil {
 		return nil, fmt.Errorf("api assets: %w", err)
@@ -73,6 +74,16 @@ func New(store *storage.Store, trust bool, mailService *mail.Service) (http.Hand
 	})
 	s.accountRoutes(mux)
 	mux.HandleFunc("GET /api/stats", s.protected(s.stats))
+	if len(logs) > 0 && logs[0] != nil {
+		mux.HandleFunc("GET /api/settings/logs", s.protected(func(w http.ResponseWriter, r *http.Request) {
+			entries, err := logs[0].Recent()
+			if err != nil {
+				http.Error(w, "无法读取诊断日志", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, entries)
+		}))
+	}
 	s.mcpRoutes(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	mux.Handle("/", http.FileServer(http.FS(root)))
