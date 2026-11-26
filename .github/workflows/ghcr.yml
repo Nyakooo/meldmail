@@ -1,17 +1,22 @@
-name: Publish GHCR image
+name: Publish GHCR image and release
 
 on:
   push:
     branches: [master]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing tag to publish as a GitHub Release (leave blank to build an image)"
+        type: string
+        required: false
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: ghcr-${{ github.ref }}
+  group: ghcr-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -19,9 +24,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        if: ${{ !inputs.release_tag }}
       - uses: docker/setup-qemu-action@v4
+        if: ${{ !inputs.release_tag }}
       - uses: docker/setup-buildx-action@v4
       - name: Image metadata
+        if: ${{ !inputs.release_tag }}
         id: meta
         uses: docker/metadata-action@v6
         with:
@@ -42,6 +50,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and publish
+        if: ${{ !inputs.release_tag }}
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -51,3 +60,31 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Verify existing tagged image
+        if: ${{ inputs.release_tag }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[a-zA-Z0-9_.-]+$ ]]; then
+            echo "::error::Expected an existing v-prefixed release tag."
+            exit 1
+          fi
+          docker buildx imagetools inspect "ghcr.io/nyakooo/meldmail:$RELEASE_TAG"
+
+  release:
+    if: ${{ inputs.release_tag || startsWith(github.ref, 'refs/tags/v') }}
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" --json url --jq .url; then
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" --verify-tag --generate-notes
