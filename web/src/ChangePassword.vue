@@ -26,7 +26,6 @@ onBeforeUnmount(() => { current.value = ''; next.value = ''; confirmation.value 
 <template>
  <dialog ref="dialog" class="password-dialog composer content-dialog" aria-labelledby="change-password-title" @close="emit('close')" @cancel.prevent="close">
   <header class="panel-heading"><div class="dialog-title"><slot name="back" /><h2 id="change-password-title">{{ t("修改登录密码") }}</h2></div><button class="icon-button" :disabled="busy" :aria-label="t('关闭修改密码')" @click="close">✕</button></header>
-  <p>{{ t("修改的是 MeldMail 管理员密码，不影响邮箱授权码或已有邮件。") }}</p>
   <form @submit.prevent="save"><div class="modal-scroll compose-fields">
    <label>{{ t("当前登录密码") }}<input v-model="current" type="password" autocomplete="current-password" required maxlength="72" :disabled="busy" autofocus></label>
    <label>{{ t("新登录密码") }}<input v-model="next" type="password" autocomplete="new-password" required maxlength="72" :disabled="busy"></label>

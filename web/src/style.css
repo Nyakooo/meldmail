@@ -244,3 +244,5 @@
 .list-heading h1{font-size:15px;font-weight:700;line-height:1.35;letter-spacing:0}
 .list-heading-count{flex:none;padding:3px 8px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
 :root[data-theme=dark] .list-heading{background:var(--hover)}
+
+.trash-tools { padding: 0 1rem .75rem; }

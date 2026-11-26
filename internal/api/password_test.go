@@ -194,11 +194,23 @@ func TestPasswordChangeBrowser(t *testing.T) {
 	script := `
 const {chromium}=require(process.env.MELDMAIL_PLAYWRIGHT_MODULE);
 (async()=>{const browser=await chromium.launch({executablePath:process.env.MELDMAIL_CHROME||'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});try{
- const page=await browser.newPage();page.setDefaultTimeout(6000);await page.goto(process.env.MELDMAIL_BROWSER_URL);await page.getByLabel('管理员密码',{exact:true}).fill('original-fixture');await page.getByRole('button',{name:'登录工作台 →',exact:true}).click();await page.getByRole('button',{name:'修改登录密码',exact:true}).click();
+ const page=await browser.newPage();page.setDefaultTimeout(6000);await page.goto(process.env.MELDMAIL_BROWSER_URL);await page.getByLabel('登录密码',{exact:true}).fill('original-fixture');await page.getByRole('button',{name:'登录工作台 →',exact:true}).click();
+ await page.getByRole('button',{name:'设置',exact:true}).click();
+ await page.getByRole('button',{name:'诊断日志',exact:true}).click();
+ const logs=page.getByRole('dialog',{name:'诊断日志',exact:true});
+ const maximize=logs.getByRole('button',{name:'最大化查看',exact:true});
+ if(await maximize.locator('svg').count()!==1||await maximize.innerText()!=='')throw Error('maximize control should be an icon');
+ await maximize.click();if(!await logs.evaluate(el=>el.classList.contains('maximized')))throw Error('log window did not maximize');
+ const restore=logs.getByRole('button',{name:'还原窗口',exact:true});
+ if(await restore.locator('svg').count()!==1)throw Error('restore control should be an icon');
+ await restore.click();if(await logs.evaluate(el=>el.classList.contains('maximized')))throw Error('log window did not restore');
+ await logs.getByRole('button',{name:'关闭诊断日志',exact:true}).click();
+ await page.getByRole('button',{name:'设置',exact:true}).click();
+ await page.getByRole('button',{name:'修改登录密码',exact:true}).click();
  const dialog=page.getByRole('dialog',{name:'修改登录密码',exact:true});await dialog.getByLabel('当前登录密码',{exact:true}).fill('wrong');await dialog.getByLabel('新登录密码',{exact:true}).fill('new-fixture');await dialog.getByLabel('确认新密码',{exact:true}).fill('new-fixture');await dialog.getByRole('button',{name:'保存新密码',exact:true}).click();await dialog.getByText('当前密码不正确',{exact:true}).waitFor();
  await dialog.getByLabel('当前登录密码',{exact:true}).fill('original-fixture');await dialog.getByLabel('确认新密码',{exact:true}).fill('mismatch');await dialog.getByRole('button',{name:'保存新密码',exact:true}).click();await dialog.getByText('两次输入的新密码不一致',{exact:true}).waitFor();
  await page.setViewportSize({width:390,height:844});if(await dialog.evaluate(el=>el.scrollWidth>el.clientWidth))throw Error('mobile overflow');await dialog.getByLabel('确认新密码',{exact:true}).fill('new-fixture');await dialog.getByRole('button',{name:'保存新密码',exact:true}).click();await page.getByText('登录密码已修改，请使用新密码重新登录。',{exact:true}).waitFor();
- await page.getByLabel('管理员密码',{exact:true}).fill('new-fixture');await page.getByRole('button',{name:'登录工作台 →',exact:true}).click();await page.getByLabel('打开导航',{exact:true}).click();await page.getByRole('button',{name:'修改登录密码',exact:true}).waitFor();console.log('PASS: wrong current/mismatched confirmation, mobile password change, forced logout, new-password login');
+ await page.getByLabel('登录密码',{exact:true}).fill('new-fixture');await page.getByRole('button',{name:'登录工作台 →',exact:true}).click();await page.getByRole('navigation',{name:'移动端导航',exact:true}).getByRole('button',{name:'设置',exact:true}).click();await page.getByRole('button',{name:'修改登录密码',exact:true}).waitFor();console.log('PASS: diagnostic log icons, wrong current/mismatched confirmation, mobile password change, forced logout, new-password login');
 }finally{await browser.close()}})().catch(e=>{console.error(e.message);process.exit(1)});`
 	path := filepath.Join(t.TempDir(), "password-browser.cjs")
 	if err := os.WriteFile(path, []byte(script), 0600); err != nil {

@@ -5,9 +5,9 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import type { Email, EmailContent, EmailUpdate, ComposeAction } from './types'
 import { request, errorMessage } from './http'
 import { dark } from './theme'
-import { applyMessagePalette } from './messagePalette'
+import { applyMessagePalette, repairLightLinks } from './messagePalette'
 const props = defineProps<{ email: Email; accountName: string }>()
-const emit = defineEmits<{ back: []; flags: [update: EmailUpdate]; compose: [action: ComposeAction] }>()
+const emit = defineEmits<{ back: []; purged: []; flags: [update: EmailUpdate]; compose: [action: ComposeAction] }>()
 const content = ref<EmailContent | null>(null)
 const loading = ref(false)
 const busy = ref(false)
@@ -22,10 +22,19 @@ function fitBody() {
  bodyObserver?.disconnect()
  const body = bodyFrame.value?.contentDocument?.body
  if (!body) return
+ body.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(link => {
+  const href = link.getAttribute('href') || ''
+  if (/^https?:\/\//i.test(href)) {
+   link.target = '_blank'
+   link.rel = 'noopener noreferrer nofollow'
+  }
+ })
  const palette = body.ownerDocument.querySelector<HTMLStyleElement>('head > style[data-reader-dark]')
  if (palette?.media === 'not all') {
   applyMessagePalette(body)
   palette.media = 'all'
+ } else if (!palette && !dark.value) {
+  repairLightLinks(body)
  }
  const resize = () => { frameHeight.value = Math.ceil(body.getBoundingClientRect().height) }
  bodyObserver = new ResizeObserver(resize)
@@ -91,6 +100,14 @@ async function load() {
 }
 function composeAction(action: ComposeAction) { emit('compose', action) }
 function remove() { if (window.confirm(t('将这封邮件移到废纸篓？'))) void change({ delete: true }) }
+async function purge() {
+ if (!window.confirm(t('永久删除这封邮件？删除后无法恢复。'))) return
+ busy.value = true; actionError.value = ''
+ try {
+  await request<void>(`/api/emails/${props.email.id}`, { method: 'DELETE' })
+  emit('purged')
+ } catch (err) { actionError.value = errorMessage(err) } finally { busy.value = false }
+}
 function size(bytes: number) { return bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB` }
 watch(() => [props.email.id, props.email.folder_id, props.email.uid], load, { immediate: true })
 onBeforeUnmount(() => { controller?.abort(); bodyObserver?.disconnect() })
@@ -106,6 +123,7 @@ onBeforeUnmount(() => { controller?.abort(); bodyObserver?.disconnect() })
    <button class="reader-icon" :class="{ starred: email.is_starred }" :title="email.is_starred ? t('★ 取消星标') : t('☆ 星标')" :aria-label="email.is_starred ? t('★ 取消星标') : t('☆ 星标')" :disabled="busy || !!email.pending_action" @click="change({ is_starred: !email.is_starred })"><Icon name="star" /></button>
    <button v-if="email.folder_role !== 'trash'" class="reader-icon" :title="t('归档')" :aria-label="t('归档')" :disabled="busy || !!email.pending_action || email.folder_role === 'archive'" @click="change({ archive: true })"><Icon name="archive" /></button>
    <button v-if="email.folder_role !== 'trash'" class="reader-icon" :title="t('删除')" :aria-label="t('删除')" :disabled="busy || !!email.pending_action || email.folder_role === 'trash'" @click="remove"><Icon name="trash" /></button>
+   <button v-if="email.folder_role === 'trash'" class="reader-icon" :title="t('彻底删除')" :aria-label="t('彻底删除')" :disabled="busy || !!email.pending_action" @click="purge"><Icon name="trash" /></button>
    <button v-if="email.folder_role === 'trash' || email.folder_role === 'archive'" class="restore-button" :disabled="busy || !!email.pending_action" @click="change({ restore: true })"><Icon name="restore" />{{ t('恢复到收件箱') }}</button>
   </div>
  </header>

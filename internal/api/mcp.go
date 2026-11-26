@@ -16,8 +16,9 @@ func (s *Server) mcpRoutes(mux *http.ServeMux) {
 	mux.Handle("/mcp", s.mcp)
 	for path, handler := range map[string]http.HandlerFunc{
 		"GET /api/mcp/tokens": s.listTokens, "POST /api/mcp/tokens": s.createToken, "DELETE /api/mcp/tokens/{id}": s.revokeToken,
-		"GET /api/mcp/approvals/{id}": s.reviewApproval,
-		"GET /api/mcp/approvals":      s.approvals, "POST /api/mcp/approvals/{id}/approve": s.approve, "POST /api/mcp/approvals/{id}/reject": s.reject,
+		"DELETE /api/mcp/tokens/{id}/revoked": s.deleteRevokedToken,
+		"GET /api/mcp/approvals/{id}":         s.reviewApproval,
+		"GET /api/mcp/approvals":              s.approvals, "POST /api/mcp/approvals/{id}/approve": s.approve, "POST /api/mcp/approvals/{id}/reject": s.reject,
 		"GET /api/mcp/audit": s.audit,
 	} {
 		mux.HandleFunc(path, s.protected(handler))
@@ -68,6 +69,24 @@ func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(204)
 }
+func (s *Server) deleteRevokedToken(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id < 1 {
+		http.Error(w, "invalid token ID", http.StatusBadRequest)
+		return
+	}
+	deleted, err := s.mcp.DeleteRevokedToken(r.Context(), id)
+	if err != nil {
+		storageError(w, err)
+		return
+	}
+	if !deleted {
+		http.Error(w, "请先撤销令牌，并等待现有审批处理完毕。", http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) approvals(w http.ResponseWriter, r *http.Request) {
 	views, err := s.mcp.Approvals(r.Context())
 	if err != nil {

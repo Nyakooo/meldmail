@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { errorMessage, request } from './http'
 import { t } from './i18n'
+import Icon from './Icon.vue'
 import type { Account } from './types'
 
 defineProps<{ accounts: Account[] }>()
@@ -71,7 +72,7 @@ onBeforeUnmount(() => controller.abort())
   <header class="panel-heading">
    <div class="dialog-title"><slot name="back" /><h2 id="diagnostic-title">{{ t('诊断日志') }}</h2></div>
    <div class="diagnostic-actions">
-    <button class="secondary" @click="maximized = !maximized">{{ t(maximized ? '还原窗口' : '最大化查看') }}</button>
+    <button class="icon-button" :title="t(maximized ? '还原窗口' : '最大化查看')" :aria-label="t(maximized ? '还原窗口' : '最大化查看')" @click="maximized = !maximized"><Icon :name="maximized ? 'minimize-window' : 'maximize-window'" /></button>
     <button class="icon-button" :aria-label="t('关闭诊断日志')" @click="dialog?.close()">✕</button>
    </div>
   </header>

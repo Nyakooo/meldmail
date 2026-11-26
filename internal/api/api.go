@@ -184,7 +184,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	defer s.authMu.Unlock()
 	hash, err := s.store.Setting(r.Context(), "admin_password")
 	if errors.Is(err, sql.ErrNoRows) {
-		http.Error(w, "administrator password must be configured at startup", 503)
+		http.Error(w, "请先配置 MeldMail 登录密码。", 503)
 		return
 	}
 	if err != nil {

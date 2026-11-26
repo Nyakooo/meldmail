@@ -113,6 +113,21 @@ func (s *Store) RevokeMCPToken(ctx context.Context, id int64) (resultErr error) 
 	return nil
 }
 
+// DeleteRevokedMCPToken removes the token and its approval records. Audit logs
+// retain the original token ID independently.
+func (s *Store) DeleteRevokedMCPToken(ctx context.Context, id int64) (bool, error) {
+	result, err := s.DB.ExecContext(ctx, `DELETE FROM mcp_tokens WHERE id=? AND enabled=0 AND NOT EXISTS
+		(SELECT 1 FROM pending_actions WHERE token_id=mcp_tokens.id AND status IN ('pending','approved'))`, id)
+	if err != nil {
+		return false, fmt.Errorf("storage delete revoked MCP token: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("storage count deleted MCP tokens: %w", err)
+	}
+	return n != 0, nil
+}
+
 type PendingAction struct {
 	ID           string `json:"id"`
 	TokenID      int64  `json:"token_id"`

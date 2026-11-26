@@ -7,11 +7,11 @@ const link: RGB = [195, 217, 250]
 const edge: RGB = [69, 68, 63]
 const maxSurfaceLuminance = luminance(mix(surface, [255, 255, 255], 0.14))
 
-function readColor(value: string): RGB | null {
+function readColor(value: string, backdrop = surface): RGB | null {
  const match = /^rgba?\((\d+(?:\.\d+)?), (\d+(?:\.\d+)?), (\d+(?:\.\d+)?)(?:, (\d+(?:\.\d+)?))?\)$/.exec(value)
  if (!match) return null
  const alpha = Number(match[4] ?? 1)
- return alpha ? mix(surface, [Number(match[1]), Number(match[2]), Number(match[3])], alpha) : null
+ return alpha ? mix(backdrop, [Number(match[1]), Number(match[2]), Number(match[3])], alpha) : null
 }
 
 function mix(base: RGB, color: RGB, amount: number): RGB {
@@ -36,6 +36,47 @@ function hasHue(color: RGB): boolean {
 
 function rgb(color: RGB): string {
  return `rgb(${color.join(', ')})`
+}
+
+const white: RGB = [255, 255, 255]
+const black: RGB = [0, 0, 0]
+const lightLink: RGB = [8, 90, 170]
+
+function contrast(foreground: RGB, background: RGB) {
+ const a = luminance(foreground) + 0.05
+ const b = luminance(background) + 0.05
+ return Math.max(a, b) / Math.min(a, b)
+}
+
+export function repairLightLinks(body: HTMLElement) {
+ const view = body.ownerDocument.defaultView
+ if (!view) return
+
+ const backgrounds = new Map<Element, RGB>()
+ const background = (element: Element | null): RGB => {
+  if (!element) return white
+  const cached = backgrounds.get(element)
+  if (cached) return cached
+  const parent = background(element.parentElement)
+  const color = readColor(view.getComputedStyle(element).backgroundColor, parent) ?? parent
+  backgrounds.set(element, color)
+  return color
+ }
+
+ const repairs: { element: HTMLElement; color: RGB }[] = []
+ body.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(anchor => {
+  for (const element of [anchor, ...Array.from(anchor.querySelectorAll<HTMLElement>('*'))]) {
+   const hasLabel = Array.from(element.childNodes).some(node => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())
+   if (!hasLabel) continue
+   const backdrop = background(element)
+   const foreground = readColor(view.getComputedStyle(element).color, backdrop)
+   if (!foreground || contrast(foreground, backdrop) >= 4.5) continue
+   const color = contrast(lightLink, backdrop) >= 4.5 ? lightLink :
+    contrast(black, backdrop) >= contrast(white, backdrop) ? black : white
+   repairs.push({ element, color })
+  }
+ })
+ for (const { element, color } of repairs) element.style.setProperty('color', rgb(color), 'important')
 }
 
 export function applyMessagePalette(body: HTMLElement) {

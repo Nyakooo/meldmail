@@ -268,6 +268,12 @@ func (s *Server) RevokeToken(ctx context.Context, id int64) error {
 	return nil
 }
 
+func (s *Server) DeleteRevokedToken(ctx context.Context, id int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.store.DeleteRevokedMCPToken(ctx, id)
+}
+
 // Review serializes the full body while holding the same bounded memory gate
 // as MCP responses. Collection endpoints return only body-free metadata.
 func (s *Server) Review(ctx context.Context, id string, consume func(ActionView) error) error {

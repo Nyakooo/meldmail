@@ -51,7 +51,7 @@ func TestMailActionsBrowser(t *testing.T) {
 	if err := store.InitPassword(ctx, string(hash)); err != nil {
 		t.Fatal(err)
 	}
-	raw := "From: Sender <sender@example.com>\r\nTo: browser@example.com\r\nSubject: Browser HTML fixture\r\nMessage-ID: <browser-original@example.com>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=fixture\r\n\r\n--fixture\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<h1>HTML body</h1><p>Safe browser content</p><style>.detail-mark{list-style:none;padding:0}.detail-mark li{display:inline-block;width:25%}</style><ul class=\"detail-mark\"><li>-</li><li>-</li></ul><script>window.hacked=true</script><img src=\"https://tracker.invalid/pixel\">\r\n--fixture\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=fixture.bin\r\nContent-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n--fixture--\r\n"
+	raw := "From: Sender <sender@example.com>\r\nTo: browser@example.com\r\nSubject: Browser HTML fixture\r\nMessage-ID: <browser-original@example.com>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=fixture\r\n\r\n--fixture\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<h1>HTML body</h1><p>Safe browser content <a href=\"https://mail-link.invalid/destination\" style=\"display:inline-block;border:1px solid #1a73e8\"><span style=\"color:#fff\">Open destination</span></a> <a href=\"https://mail-link.invalid/filled\" style=\"display:inline-block;background-color:#174ea6;color:#fff\">Filled button</a></p><style>.detail-mark{list-style:none;padding:0}.detail-mark li{display:inline-block;width:25%}</style><ul class=\"detail-mark\"><li>-</li><li>-</li></ul><script>window.hacked=true</script><img src=\"https://tracker.invalid/pixel\">\r\n--fixture\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=fixture.bin\r\nContent-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n--fixture--\r\n"
 	if _, err := fixture.User.Append("INBOX", strings.NewReader(raw), &imap.AppendOptions{Time: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +121,22 @@ func TestMailActionsBrowser(t *testing.T) {
 		}
 		w.WriteHeader(204)
 	})
+	mux.HandleFunc("POST /fixture/trash", func(w http.ResponseWriter, r *http.Request) {
+		if _, err := fixture.User.Append("Trash", strings.NewReader(raw), &imap.AppendOptions{Time: time.Now()}); err != nil {
+			t.Error(err)
+			http.Error(w, "failed", 500)
+			return
+		}
+		w.WriteHeader(204)
+	})
+	mux.HandleFunc("GET /fixture/trash", func(w http.ResponseWriter, r *http.Request) {
+		status, err := fixture.User.Status("Trash", &imap.StatusOptions{NumMessages: true})
+		if err != nil || status.NumMessages == nil {
+			http.Error(w, "failed", 500)
+			return
+		}
+		writeJSON(w, *status.NumMessages)
+	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	defer server.CloseClientConnections()
@@ -133,26 +149,40 @@ const {chromium}=require(process.env.MELDMAIL_PLAYWRIGHT_MODULE);
   page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.url().includes('tracker.invalid'))tracker=true});
   const settled=async()=>{for(let i=0;i<200;i++){const response=await page.request.get(process.env.MELDMAIL_BROWSER_URL+'/fixture/settled');if((await response.json()).pending===0)return;await new Promise(r=>setTimeout(r,10))}throw new Error('flags did not settle')};
   await page.addInitScript(()=>{window.__mailEventCount=0;const Native=window.EventSource;window.EventSource=class extends Native{constructor(...args){super(...args);this.addEventListener('new_email',()=>{window.__mailEventCount++})}}});
-  await page.goto(process.env.MELDMAIL_BROWSER_URL);await page.getByLabel('管理员密码',{exact:true}).fill('fixture-admin');await page.getByRole('button',{name:'登录工作台 →',exact:true}).click();
+  await page.goto(process.env.MELDMAIL_BROWSER_URL);await page.getByLabel('登录密码',{exact:true}).fill('fixture-admin');await page.getByRole('button',{name:'登录工作台 →',exact:true}).click();
+  const [original]= (await (await page.request.get(process.env.MELDMAIL_BROWSER_URL+'/api/emails')).json()).emails;
+  if((await page.request.delete(process.env.MELDMAIL_BROWSER_URL+'/api/emails/'+original.id)).status()!==409)throw new Error('direct purge accepted an inbox message');
   await page.locator('.email-item').first().click();
   await page.frameLocator('iframe[title="邮件正文"]').getByRole('heading',{name:'HTML body',exact:true}).waitFor();
   await page.locator('.cache-status').filter({hasText:'正文已保存到本地，下次直接读取'}).waitFor();
+  await page.context().route('https://mail-link.invalid/destination', route => route.fulfill({contentType:'text/html',body:'Destination reached'}));
+  const emailFrame=page.frameLocator('iframe[title="邮件正文"]');
+  const labelColor=await emailFrame.getByText('Open destination',{exact:true}).evaluate(el=>getComputedStyle(el).color);
+  if(labelColor==='rgb(255, 255, 255)')throw new Error('light theme renders a white link label on white');
+  const filled=await emailFrame.getByRole('link',{name:'Filled button'}).evaluate(el=>[getComputedStyle(el).color,getComputedStyle(el).backgroundColor]);
+  if(filled.join('|')!=='rgb(255, 255, 255)|rgb(23, 78, 166)')throw new Error('readable sender button colors changed');
+  const popupPromise=page.waitForEvent('popup');
+  await page.frameLocator('iframe[title="邮件正文"]').getByRole('link',{name:'Open destination'}).click();
+  const popup=await popupPromise;
+  await popup.getByText('Destination reached').waitFor();
+  if(await popup.evaluate(()=>window.opener!==null || document.referrer!==''))throw new Error('mail link exposed its opener or referrer');
+  await popup.close();
   const readingFrame=page.frames().find(f=>f.parentFrame());
   if(await readingFrame.locator('.detail-mark li').first().evaluate(el=>getComputedStyle(el).display)!=='inline-block')throw new Error('mail stylesheet layout lost');
   await page.waitForFunction(()=>{const f=document.querySelector('.email-frame');return f.clientHeight>=f.contentDocument.body.getBoundingClientRect().height});
 
   await page.getByRole('button',{name:'切换为深色',exact:true}).click();await page.frameLocator('iframe[title="邮件正文"]').getByRole('heading',{name:'HTML body',exact:true}).waitFor();
   await page.waitForFunction(()=>document.documentElement.dataset.theme==='dark');
-  const frame=page.frames().find(f=>f.parentFrame());await frame.waitForFunction(()=>getComputedStyle(document.body).backgroundColor==='rgb(37, 40, 45)');
+  const frame=page.frames().find(f=>f.parentFrame());await frame.waitForFunction(()=>getComputedStyle(document.body).colorScheme==='dark');
   if(process.env.MELDMAIL_STATS_SCREENSHOT)await page.screenshot({path:process.env.MELDMAIL_STATS_SCREENSHOT.replace('.png','-reading-dark.png')});
-  await page.getByRole('button',{name:'← 返回列表',exact:true}).click();await page.locator('.email-item').first().click();await page.locator('.cache-status').filter({hasText:'已从本地缓存读取'}).waitFor();
+  await page.getByRole('button',{name:'返回列表',exact:true}).click();await page.locator('.email-item').first().click();await page.locator('.cache-status').filter({hasText:'已从本地缓存读取'}).waitFor();
   await page.getByRole('button',{name:'切换为浅色',exact:true}).click();
   if(await page.frameLocator('iframe[title="邮件正文"]').locator('script,img').count())throw new Error('unsafe HTML retained');
   const attachment=page.getByRole('link',{name:'↓ fixture.bin',exact:false});const href=await attachment.getAttribute('href');const download=await page.request.get(process.env.MELDMAIL_BROWSER_URL+href);
   if(!download.ok()||(await download.body()).toString()!=='hello'||!download.headers()['content-disposition'].includes('attachment'))throw new Error('attachment download failed');
   await settled();
-  await page.getByRole('button',{name:'＋ 撰写邮件',exact:true}).click();await page.getByLabel('收件人',{exact:true}).fill('recipient@example.com');await page.getByLabel('主题',{exact:true}).fill('A new browser message');await page.getByLabel('正文',{exact:true}).fill('Composed in the browser');await page.getByRole('button',{name:'发送邮件 →',exact:true}).click();await page.locator('dialog.composer').waitFor({state:'detached'});
-  for(const action of ['回复','转发']){await page.getByRole('button',{name:action,exact:true}).click();if(action==='转发')await page.getByLabel('收件人',{exact:true}).fill('forward@example.com');await page.getByLabel('正文',{exact:true}).fill('A browser note');await page.getByRole('button',{name:'发送邮件 →',exact:true}).click();await page.locator('dialog.composer').waitFor({state:'detached'})}
+  await page.getByRole('button',{name:'＋ 撰写邮件',exact:true}).click();await page.getByLabel('收件人',{exact:true}).fill('recipient@example.com');await page.getByLabel('主题',{exact:true}).fill('A new browser message');await page.getByLabel('正文',{exact:true}).fill('Composed in the browser');await page.getByRole('button',{name:'发送邮件 →',exact:true}).click();await page.locator('dialog[aria-labelledby="compose-title"]').waitFor({state:'detached'});
+  for(const action of ['回复','转发']){await page.getByRole('button',{name:action,exact:true}).click();if(action==='转发')await page.getByLabel('收件人',{exact:true}).fill('forward@example.com');await page.getByLabel('正文',{exact:true}).fill('A browser note');await page.getByRole('button',{name:'发送邮件 →',exact:true}).click();await page.locator('dialog[aria-labelledby="compose-title"]').waitFor({state:'detached'})}
   await page.getByRole('button',{name:'☆ 星标',exact:true}).click();await settled();await page.getByRole('button',{name:'★ 取消星标',exact:true}).waitFor();
   await page.getByRole('button',{name:'归档',exact:true}).click();await settled();await page.waitForFunction(()=>document.querySelectorAll('.email-item').length===0);
   await page.getByRole('button',{name:/已归档/}).click();await page.locator('.email-item').first().click();await page.frameLocator('iframe[title="邮件正文"]').getByRole('heading',{name:'HTML body',exact:true}).waitFor();
@@ -169,8 +199,26 @@ const {chromium}=require(process.env.MELDMAIL_PLAYWRIGHT_MODULE);
   await page.getByLabel('打开导航',{exact:true}).click();await page.getByRole('button',{name:'统一收件箱',exact:true}).click();
   await page.locator('.email-item').filter({hasText:'HTML fixture'}).first().click();
   await page.frameLocator('iframe[title="邮件正文"]').getByRole('heading',{name:'HTML body',exact:true}).waitFor();
+  const base=process.env.MELDMAIL_BROWSER_URL;
+  await settled();
+  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'删除',exact:true}).click();await settled();
+  await page.getByLabel('打开导航',{exact:true}).click();await page.getByRole('button',{name:/废纸篓/}).click();
+  await page.locator('.email-item').first().click();await settled();
+  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'彻底删除',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('.email-item').length===0);
+  const trashCount=async()=>await (await page.request.get(base+'/fixture/trash')).json();
+  if(await trashCount()!==0)throw new Error('single message remained on IMAP');
+  await page.getByLabel('打开导航',{exact:true}).click();await page.getByRole('button',{name:'统一收件箱',exact:true}).click();
+  await page.locator('.email-item').first().click();await settled();
+  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'删除',exact:true}).click();await settled();
+  await page.getByLabel('打开导航',{exact:true}).click();await page.getByRole('button',{name:/废纸篓/}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('.email-item').length===1);
+  if(!(await page.request.post(base+'/fixture/trash')).ok())throw new Error('could not append unsynced trash fixture');
+  const [cleared]=await Promise.all([page.waitForResponse(r=>r.request().method()==='DELETE'&&r.url().endsWith('/trash')), (async()=>{page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'清空废纸篓',exact:true}).click()})()]);
+  if(!cleared.ok()||await trashCount()!==0)throw new Error('empty Trash did not clear the synced and unsynced remote messages: '+cleared.status()+' '+await cleared.text());
+  await page.waitForFunction(()=>document.querySelectorAll('.email-item').length===0);
   if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('mobile overflow');if(tracker)throw new Error('remote tracker requested');if(errors.length)throw new Error(errors.join('\n'));
-  console.log('PASS: HTML reading, authenticated attachment download, compose/reply/forward, star/archive/trash/restore, disabled cursor, desktop/mobile; no XSS/tracker requests');
+  console.log('PASS: HTML reading and new-tab links, permanent trash deletion, authenticated attachment download, compose/reply/forward, star/archive/trash/restore, disabled cursor, desktop/mobile; no XSS/tracker requests');
  }finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exit(1)});
 `

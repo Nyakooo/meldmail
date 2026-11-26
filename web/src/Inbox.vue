@@ -87,6 +87,19 @@ async function loadEmails(targetCursor = pageCursor.value) {
   return true
  } catch (err) { if (!controller.signal.aborted) error.value = errorMessage(err); return false } finally { if (current === sequence) loading.value = false }
 }
+const clearingTrash = ref(false)
+const trashAccount = computed(() => accounts.value.find(a => a.id === accountId.value)
+  || (accounts.value.length === 1 ? accounts.value[0] : undefined))
+async function emptyTrash() {
+ const account = trashAccount.value
+ if (!account || clearingTrash.value || !window.confirm(t('清空「{email}」的废纸篓？该邮箱废纸篓中的所有邮件将被永久删除，无法恢复。').replace('{email}', account.email))) return
+ clearingTrash.value = true; error.value = ''
+ try {
+  await request<void>(`/api/accounts/${account.id}/trash`, { method: 'DELETE' })
+  if (folder.value === 'trash') filter()
+  void loadStats()
+ } catch (err) { error.value = errorMessage(err) } finally { clearingTrash.value = false }
+}
 function filter() { previousCursors.value = []; pageCursor.value = ''; selected.value = null; sidebarOpen.value = false; void loadEmails() }
 async function movePage(next: boolean) {
  if (loading.value || navigating.value || pageDirty.value || (next ? !cursor.value : !previousCursors.value.length)) return
@@ -201,6 +214,16 @@ function startEvents() {
    scheduleRefresh()
   } catch { error.value = t('邮件更新失败，请重新加载列表') }
  })
+ events.addEventListener('trash_changed', (event: MessageEvent<string>) => {
+  try {
+   const { account_id, email_id } = JSON.parse(event.data) as { account_id: number; email_id: number }
+   if (selected.value?.id === email_id || (!email_id && selected.value?.folder_role === 'trash' && selected.value.account_id === account_id)) selected.value = null
+   if (folder.value === 'trash' && (!accountId.value || accountId.value === account_id)) {
+    if (email_id) emails.value = emails.value.filter(email => email.id !== email_id)
+    scheduleRefresh()
+   } else { void loadStats() }
+  } catch { error.value = t('邮件状态更新失败，请重新加载列表') }
+ })
  events.addEventListener('flag_updated', (event: MessageEvent<string>) => {
   try { applyFlags(JSON.parse(event.data) as EmailUpdate); scheduleRefresh() } catch { error.value = t('邮件状态更新失败，请重新加载列表') }
  })
@@ -251,13 +274,17 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
       </span>
      </header>
      <div class="mobile-account-filter"><select v-model="accountId" :aria-label="t('筛选邮箱')" @change="filter"><option :value="0">{{ t("所有邮箱") }}</option><option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.display_name || a.email }}</option></select></div>
+     <div v-if="folder === 'trash' && accounts.length" class="trash-tools">
+      <button v-if="trashAccount" class="secondary" :disabled="clearingTrash" @click="emptyTrash">{{ t('清空废纸篓') }}</button>
+      <small v-else>{{ t('选择一个邮箱后可清空废纸篓。') }}</small>
+     </div>
      <p v-if="loading && !emails.length" class="list-status" role="status">{{ t("正在加载邮件…") }}</p>
      <div v-else-if="!emails.length" class="empty-list"><div class="empty-symbol">✉</div><h2>{{ accounts.length ? t('这里很安静') : t('从连接一个邮箱开始') }}</h2><p>{{ query ? t('没有找到匹配邮件，试试其他关键词。') : accounts.length ? t('暂无符合条件的邮件。你可以同步邮箱，或调整筛选条件。') : t('把工作与生活的来信，汇集在一个地方。') }}</p><button v-if="!accounts.length" class="primary" @click="settings = 'account'">{{ t("＋ 连接邮箱") }}</button></div>
      <ul v-else class="email-items"><li v-for="email in emails" :key="email.id"><button class="email-item" :class="{ selected: selected?.id === email.id, unread: !email.is_read }" @click="selected = email"><div class="email-item-top"><span class="sender">{{ email.from_name || email.from_addr || t('未知发件人') }}</span><time :datetime="new Date(email.date * 1000).toISOString()">{{ date(email.date) }}</time></div><div class="email-subject"><span v-if="!email.is_read" class="unread-dot"></span><strong>{{ email.subject || t('（无主题）') }}</strong><span v-if="email.has_attachments" :aria-label="t('有附件')">↧</span><span v-if="email.is_starred" :aria-label="t('已加星标')">★</span></div><p>{{ email.snippet || t('（暂无摘要）') }}</p><span v-if="email.pending_action" class="pending-label">{{ t("正在确认移动 · ") }}</span><span class="account-tag">{{ accountName(email.account_id) }}</span></button></li></ul>
      <nav v-if="total || previousCursors.length" class="mail-pagination" :aria-label="t('邮件分页')"><button class="secondary" :disabled="loading || navigating || pageDirty || !previousCursors.length" @click="movePage(false)">{{ t("上一页") }}</button><span><strong>{{ t("第 ") }}{{ previousCursors.length + 1 }}{{ t(" 页") }}</strong><small>{{ t("每页 50 封") }}</small></span><button class="secondary" :disabled="loading || navigating || pageDirty || !cursor" @click="movePage(true)">{{ t("下一页") }}</button></nav>
     </section>
     <section class="reader" :aria-label="t('邮件预览')">
-     <MessageReader v-if="selected" :email="selected" :account-name="accountName(selected.account_id)" @back="selected = null" @flags="applyFlags" @compose="compose" />
+     <MessageReader v-if="selected" :email="selected" :account-name="accountName(selected.account_id)" @back="selected = null" @purged="filter(); void loadStats()" @flags="applyFlags" @compose="compose" />
      <div v-else class="reader-empty"><img src="/meldmail-mark.svg" alt="" class="empty-mark"><h2>{{ t("选择一封邮件") }}</h2><p>{{ t("在这里阅读、回复和处理来信。") }}</p></div>
     </section>
    </div>

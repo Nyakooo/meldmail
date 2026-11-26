@@ -244,14 +244,15 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 - `POST /api/accounts/import`：使用配置密码解密并校验整个包；按去除首尾空格、忽略大小写的邮箱地址去重。重复条目以后出现的连接配置为准，空凭据不覆盖前一项；与已有邮箱合并时保留账号 ID 与邮件，缓存仍按来源变化规则失效；整批账号与默认代理在同一短事务写入，并用目标实例主密钥重新加密。文件中共用代理非空时更新本地共用代理，为空时保留已有共用代理；仅主动选择共用代理的账号使用它。导入不生成或刷新服务商授权码与 OAuth 令牌。
 - `GET/PUT /api/settings/proxy`（可选共用代理配置，仅影响显式选择 global 的邮箱）
 - `GET /api/emails?account_id=&folder=&unread=&q=&cursor=&limit=50`（统一收件箱列表 + FTS5 检索；返回 `emails`、`next_cursor` 和不随游标缩小的筛选总数 `total`；前端使用前后翻页的游标历史；待确认的归档/删除/恢复在目标类目中返回有效 `folder_role` 和 `pending_action`，在确认前保留原始来源定位用于恢复）
-- 恢复通过 flags 接口的 `{"restore":true}` 将废纸篓或归档邮件移回 `INBOX`；`restore`、`archive`、`delete` 互斥。恢复复用持久化移动检查点、失败重试与 SSE，确认前保留原始来源定位。废纸篓提供已读、星标与恢复操作，不显示归档或重复删除。
-- `GET /api/emails/:id`（优先返回本地正文；未命中则拉取、清洗并保存，含附件元信息与 `cached` / `local` 状态）
+- 恢复通过 flags 接口的 `{"restore":true}` 将废纸篓或归档邮件移回 `INBOX`；`restore`、`archive`、`delete` 互斥。恢复复用持久化移动检查点、失败重试与 SSE，确认前保留原始来源定位。废纸篓提供已读、星标、恢复与彻底删除操作。
+- `DELETE /api/emails/:id` 彻底删除单封废纸篓邮件。`DELETE /api/accounts/:id/trash` 清空指定邮箱的废纸篓。Web 端要求确认。IMAP 使用定向 UID EXPUNGE，成功后移除本地索引和正文缓存并通过 SSE 更新。
+- `GET /api/emails/:id`（优先返回本地正文；未命中则拉取、清洗并保存，含附件元信息与 `cached` / `local` 状态）。Web 阅读器中的 HTTP(S) 链接在新标签页打开，并隔离原窗口和来源信息。
 - `GET /api/emails/:id/attachments/:part_id`（流式下载附件）
 - `PATCH /api/emails/:id/flags`（已读/未读/星标/归档/删除/恢复到收件箱：先更新本地 DB 并推送 SSE，再异步同步 IMAP）
 - `POST /api/emails/send`（撰写/回复/转发，走对应账号代理与 SMTP）
 - `GET /api/stats`（管理员会话鉴权；本地已同步总数/未读数、各账号汇总、内存与配额、CPU 采样、SQLite/WAL/SHM 占用和所在磁盘可用容量；无监控中间件）
-- `GET /api/events`（SSE 长连接，推送 `new_email`、`flag_updated`、`sync_status`、`mcp_approval_required`）
-- `GET/POST/DELETE /api/mcp/tokens` 及 `GET /api/mcp/approvals`、`POST /api/mcp/approvals/:id/approve`、`POST /api/mcp/approvals/:id/reject`
+- `GET /api/events`（SSE 长连接，推送 `new_email`、`flag_updated`、`trash_changed`、`sync_status`、`mcp_approval_required`）
+- `GET/POST /api/mcp/tokens`、`DELETE /api/mcp/tokens/:id`（撤销）、`DELETE /api/mcp/tokens/:id/revoked`（彻底删除已撤销令牌及其审批历史，保留审计日志）及 `GET /api/mcp/approvals`、`POST /api/mcp/approvals/:id/approve`、`POST /api/mcp/approvals/:id/reject`
 
 ### 5.2 MCP Server（`/mcp` Streamable HTTP）
 - 鉴权：Header `Authorization: Bearer <token>`，比对 `mcp_tokens.token_hash`，记录 `audit_logs`。
