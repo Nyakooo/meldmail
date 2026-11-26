@@ -185,3 +185,44 @@ func TestGlobalSyncLimit(t *testing.T) {
 		t.Fatalf("peak=%d active=%d", peak.Load(), active.Load())
 	}
 }
+
+// A transient flag-action failure can mark an otherwise live account as error.
+// Successful IDLE-driven synchronization must publish its recovered status.
+func TestNotificationPublishesRecoveredStatus(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(chan func(), 1)
+	statuses := make(chan string, 8)
+	synced := make(chan struct{}, 8)
+	backend := Backend{
+		Watch: func(ctx context.Context, id int64, notify func()) error {
+			ready <- notify
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		Sync:      func(context.Context, int64) (int, error) { synced <- struct{}{}; return 0, nil },
+		Status:    func(ctx context.Context, id int64, mode string, err error) error { statuses <- mode; return nil },
+		Reconcile: func(context.Context, int64) error { return nil },
+	}
+	done := make(chan error, 1)
+	go func() { done <- NewManager(backend, testOptions()).session(ctx, 1, func() {}) }()
+	defer func() {
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Errorf("session exit: %v", err)
+		}
+	}()
+	notify := <-ready
+	<-synced
+	<-statuses // Initial healthy status, before a later transient failure.
+	notify()
+	<-synced
+	select {
+	case mode := <-statuses:
+		if mode != "idle" {
+			t.Fatalf("recovered mode = %s", mode)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("successful synchronization left the UI in reconnecting status")
+	}
+}

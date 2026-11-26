@@ -221,14 +221,22 @@ func (m *Manager) session(ctx context.Context, id int64, onStable func()) (resul
 				stableTimer = time.NewTimer(m.options.StableInterval)
 				stable = stableTimer.C
 			}
-			if _, err := m.backend.Sync(ctx, id); err != nil && !errors.Is(err, ErrBusy) {
+			if _, err := m.backend.Sync(ctx, id); err != nil {
+				if !errors.Is(err, ErrBusy) {
+					return err
+				}
+			} else if err := m.backend.Status(ctx, id, "idle", nil); err != nil {
 				return err
 			}
 		case <-ticker.C:
 			if err := m.backend.Reconcile(ctx, id); err != nil && !errors.Is(err, ErrBusy) {
 				return err
 			}
-			if _, err := m.backend.Sync(ctx, id); err != nil && !errors.Is(err, ErrBusy) {
+			if _, err := m.backend.Sync(ctx, id); err != nil {
+				if !errors.Is(err, ErrBusy) {
+					return err
+				}
+			} else if err := m.backend.Status(ctx, id, "idle", nil); err != nil {
 				return err
 			}
 		}
