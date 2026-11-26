@@ -70,6 +70,8 @@ Pending flag changes are bounded to 128 metadata-only records in SQLite settings
 
 M4 acceptance commands:
 
+`DELETE /api/emails/:id` permanently removes one Trash message. `DELETE /api/accounts/:id/trash` empties the specified account’s Trash. The server uses targeted IMAP `UID EXPUNGE` and publishes `trash_changed` after removing the local metadata and cached body.
+
 ```sh
 go test ./internal/mail -run 'TestReadSanitizeAndDecodeAttachment|TestStreaming20MiBAttachment|TestRecoverAcknowledgedMove' -v
 go test ./internal/mail/adapter -run TestGmailArchiveRemovesInboxLabel -v
@@ -81,7 +83,7 @@ The 20MiB RSS acceptance runs without race instrumentation; functional protocol 
 
 ## MCP access and approvals (M5)
 
-Open **AI 与 MCP** in the web sidebar to create an access token. Tokens default to read-only, and write tokens default to requiring approval for sends. The raw token is displayed only once; the server stores its SHA-256 hash. Revocation disables the token immediately and rejects its unapproved requests while preserving audit history.
+Open **Settings → AI & MCP** to create an access token. Tokens default to read-only, and write tokens default to requiring approval for sends. The raw token is displayed only once; the server stores its SHA-256 hash. Revocation disables the token immediately and rejects its unapproved requests while preserving audit history.
 
 Configure your MCP client with the Streamable HTTP endpoint `https://your-mail-host/mcp` and header `Authorization: Bearer <your-token>`. The transport is stateless and returns JSON responses. It negotiates MCP versions `2025-03-26`, `2025-06-18`, and `2025-11-25`; standalone GET streams and session DELETE return 405. Clients must advertise `Accept: application/json, text/event-stream` and send JSON. Requests have an 8MiB envelope limit and bounded read/write deadlines. The official Go MCP SDK is used as an external interoperability client in acceptance tests; production request handling uses bounded JSON decoding.
 
@@ -99,7 +101,7 @@ Approval content is kept only in memory: at most 32 actions and 16MiB total payl
 
 Admin endpoints require the web session cookie:
 
-- `GET/POST /api/mcp/tokens`, `DELETE /api/mcp/tokens/:id`.
+- `GET/POST /api/mcp/tokens` lists and creates tokens. `DELETE /api/mcp/tokens/:id` revokes a token. `DELETE /api/mcp/tokens/:id/revoked` removes a revoked token and its approval records once pending work has finished. Audit logs retain the original token ID.
 - `GET /api/mcp/approvals` returns body-free status metadata; `GET /api/mcp/approvals/:id` returns one review payload.
 - `POST /api/mcp/approvals/:id/approve` or `/reject` decides a pending action.
 - `GET /api/mcp/audit` returns the latest 100 redacted audit entries.
@@ -151,9 +153,9 @@ go test ./internal/mail/imapclient -run 'TestSyncProviderIgnoresPartialLength|Te
 
 The account-form browser check uses isolated API fixtures and the same optional Playwright/Chrome installation described above; it never saves or contacts a real mailbox.
 
-## Changing the administrator login password
+## Changing the MeldMail sign-in password
 
-Sign in with the current MeldMail administrator password, then choose **修改登录密码** in the sidebar. Enter the current password, new password and confirmation. Saving stores a bcrypt hash, signs out all web sessions (including existing SSE streams), and asks you to sign in with the new password. Mail accounts, encrypted credentials, metadata and MCP tokens are preserved. Passwords must be non-empty and fit bcrypt's 72-byte limit.
+Sign in with the current MeldMail sign-in password, then choose **Settings → Change password**. Enter the current password, new password and confirmation. Saving stores a bcrypt hash, signs out all web sessions (including existing SSE streams), and asks you to sign in with the new password. Mail accounts, encrypted credentials, metadata and MCP tokens are preserved. Passwords must be non-empty and fit bcrypt's 72-byte limit.
 
 `MELDMAIL_ADMIN_PASSWORD` in `.env` is used only to initialize an empty installation. Editing it, restarting Docker or recreating the container does not replace the existing database password. Likewise, `docker exec meldmail printenv MELDMAIL_ADMIN_PASSWORD` displays the container's startup value, not necessarily the current login password. After initialization, change the password through the web entry above. Keep the existing `MELDMAIL_MASTER_KEY`; it encrypts mailbox credentials and is unrelated to the login password.
 

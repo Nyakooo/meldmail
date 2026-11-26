@@ -34,7 +34,7 @@ chmod 600 .env
 openssl rand -hex 32
 ```
 
-Edit `.env`: put the generated key in `MELDMAIL_MASTER_KEY` and set the administrator password:
+Edit `.env`: put the generated key in `MELDMAIL_MASTER_KEY` and set the MeldMail sign-in password:
 
 ```dotenv
 MELDMAIL_HTTP_PORT=18085
@@ -60,7 +60,7 @@ The default host listener is `127.0.0.1:18085`; use host Nginx for external HTTP
 | --- | --- | --- |
 | `MELDMAIL_HTTP_PORT` | `18085` | Host port; for example `54321`. Also update the Nginx upstream when changing it. |
 | `MELDMAIL_MASTER_KEY` | Required | A 64-character hexadecimal encryption key. Preserve the original key when reusing data. |
-| `MELDMAIL_ADMIN_PASSWORD` | Required on first startup | Initializes a database that has no administrator password; never overwrites an existing password. |
+| `MELDMAIL_ADMIN_PASSWORD` | Required on first startup | Initializes a database that has no MeldMail sign-in password; never overwrites an existing password. |
 | `MELDMAIL_IMAGE` | `ghcr.io/nyakooo/meldmail:latest` | A release tag, `sha-<full-commit-sha>` tag or digest. |
 
 The default Compose YAML explicitly sets `MELDMAIL_ADDR=:8080`, `MELDMAIL_DB_PATH=/data/meldmail.db` and `MELDMAIL_TRUST_PROXY=true`. Changing these three values only in `.env` does not override that YAML; edit Compose or use a local override when needed. The deployment script honors `docker-compose.override.yml`.
@@ -117,7 +117,7 @@ If a CDN or another proxy terminates HTTPS and connects to this Nginx over HTTP,
 | --- | --- |
 | The home page itself returns 403 | Domain/server matching, whether the request reaches `proxy_pass`, access restrictions and any frontend proxy. |
 | Login returns `403 invalid origin` | `Host`, the external HTTPS protocol, nonstandard external ports and other `location` blocks overriding headers. |
-| Login returns `401 invalid credentials` | Application administrator authentication. This is not a mailbox app password or GHCR login. |
+| Login returns `401 invalid credentials` | Check the MeldMail sign-in password configured for this instance. |
 | Editing `.env` does not change the password | The database already has one. Removing containers or images does not remove mounted `data/`. |
 | 502 or connection refused | Container health, its host listener and the Nginx upstream port. |
 
@@ -133,7 +133,7 @@ When signed in, choose **Change password** in the sidebar. A successful change r
 
 ### Forgotten password: preserve mailbox data
 
-Set the new `MELDMAIL_ADMIN_PASSWORD` in `.env` first, and **preserve the original `MELDMAIL_MASTER_KEY`**. Run the following from the project directory with Python 3 installed. It backs up the database and removes only the administrator password setting; accounts, cached messages and MCP tokens remain.
+Set the new `MELDMAIL_ADMIN_PASSWORD` in `.env` first, and **preserve the original `MELDMAIL_MASTER_KEY`**. Run the following from the project directory with Python 3 installed. It backs up the database and removes only the MeldMail sign-in password setting; accounts, cached messages and MCP tokens remain.
 
 ```sh
 (
@@ -153,7 +153,7 @@ with sqlite3.connect(f'file:{path}?mode=rw', uri=True) as db:
     with sqlite3.connect(backup) as target:
         db.backup(target)
     db.execute('DELETE FROM settings WHERE key = ?', ('admin_password',))
-print(f'Backup: {backup}; administrator password cleared')
+print(f'Backup: {backup}; MeldMail sign-in password cleared')
 PY
 ./deploy.sh
 )
@@ -181,7 +181,7 @@ The new installation uses the password in `.env`; add your mailboxes again. Back
 
 Open **Accounts & connections → Import / export**. On the source instance, choose a separate configuration password of at least 12 characters and download the encrypted JSON. On the destination, choose that file, enter the same password and select **Import and merge**. The destination encrypts credentials with its own master key; you do not need to copy the source master key or re-enter still-valid app passwords.
 
-Bundles include mailbox connections, existing app passwords / OAuth tokens and proxies. They exclude messages, the administrator password and MCP tokens. Email addresses are matched after trimming whitespace and ignoring case. Repeated imports update the original account and retain its messages. Within a bundle, the last connection wins, while missing credentials retain the earlier values. Validation failures do not write partial configuration. A nonempty shared proxy in the bundle replaces the destination shared proxy, affecting only mailboxes that explicitly use it.
+Bundles include mailbox connections, existing app passwords / OAuth tokens and proxies. They exclude messages, the MeldMail sign-in password and MCP tokens. Email addresses are matched after trimming whitespace and ignoring case. Repeated imports update the original account and retain its messages. Within a bundle, the last connection wins, while missing credentials retain the earlier values. Validation failures do not write partial configuration. A nonempty shared proxy in the bundle replaces the destination shared proxy, affecting only mailboxes that explicitly use it.
 
 The configuration password is not stored on the server. Keep both the file and its password safe. OAuth tokens remain subject to provider expiry; import does not refresh or extend their lifetime.
 
@@ -197,10 +197,15 @@ Reopening an editor restores the complete saved proxy URL for review and editing
 
 - TLS failures or connection resets happen before authentication; they do not by themselves prove the password is wrong.
 - If the host connects but the container cannot, check DNS, IPv4/IPv6 and proxy reachability separately.
-- Trash and archived messages can be restored to Inbox. Move operations stay disabled while awaiting provider confirmation to prevent duplicate submissions.
+## Reading and managing mail
+
+- HTTP(S) links in message bodies open in a new tab. Light mode adjusts link text when it has insufficient contrast. In dark mode, choose **Show original colors** to see the sender’s palette.
+- Restore archived or trashed messages to Inbox. Open a trashed message to **Delete permanently**, or select an account and choose **Empty Trash**. After confirmation, the server permanently removes the selected mail. Emptying Trash also removes messages that have yet to sync locally. The mail server must support targeted permanent deletion.
+- Open **Settings → AI & MCP → Access token** to revoke a token. Deleting a revoked token also removes its approval records. Audit logs are retained.
+- Open **Settings → Diagnostic logs** to view logs. Use the icon in the upper-right corner to maximize or restore the window.
 
 
-### Optional host proxy port (Linux)
+## Optional host proxy port (Linux)
 
 For Mihomo/Clash listening on the deployment server's loopback HTTP or mixed port, set:
 
@@ -210,7 +215,7 @@ MELDMAIL_HOST_PROXY_PORT=7890
 
 Run `./deploy.sh`. It automatically adds `docker-compose.host-proxy.yml` and uses host networking to reach the host's loopback proxy. The web server still binds only to `127.0.0.1:${MELDMAIL_HTTP_PORT:-18085}`; Nginx stays unchanged. No public proxy listener is needed. This must be a port on the deployment server, not on the browser's computer.
 
-Select **Use shared proxy** only for mailboxes that need it. Direct and independent mailbox connections remain independent. On each application startup, the environment port takes precedence over the stored shared proxy; unchanged values are not rewritten. The web editor shows the source and becomes read-only. Clearing the variable and redeploying removes the previously environment-managed proxy. If never enabled, manual shared proxy settings remain untouched. Administrator passwords and master keys are unaffected.
+Select **Use shared proxy** only for mailboxes that need it. Direct and independent mailbox connections remain independent. On each application startup, the environment port takes precedence over the stored shared proxy; unchanged values are not rewritten. The web editor shows the source and becomes read-only. Clearing the variable and redeploying removes the previously environment-managed proxy. If never enabled, manual shared proxy settings remain untouched. MeldMail sign-in passwords and master keys are unaffected.
 
 After editing `.env`, rerun `./deploy.sh` to recreate the container. `docker restart` does not reload `.env`. For source builds:
 
