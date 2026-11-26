@@ -157,7 +157,13 @@ func (m *Manager) worker(ctx context.Context, id int64) (result error) {
 		} else {
 			mode = "polling"
 		}
-		if statusErr := m.backend.Status(ctx, id, mode, err); statusErr != nil {
+		cause := err
+		// A successful sync with an IMAP server that lacks IDLE falls back to polling.
+		// A joined sync failure still marks the account as unavailable.
+		if err == ErrNoIdle {
+			cause = nil
+		}
+		if statusErr := m.backend.Status(ctx, id, mode, cause); statusErr != nil {
 			return statusErr
 		}
 		slog.InfoContext(ctx, "mail retry scheduled", "account_id", id, "mode", mode, "failures", failures, "retry_after_ms", delay.Milliseconds())

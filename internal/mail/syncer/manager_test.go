@@ -226,3 +226,38 @@ func TestNotificationPublishesRecoveredStatus(t *testing.T) {
 		t.Fatal("successful synchronization left the UI in reconnecting status")
 	}
 }
+
+func TestPollingStatusWhenIdleUnsupported(t *testing.T) {
+	syncFailure := errors.New("sync failed")
+	for _, tc := range []struct {
+		name    string
+		syncErr error
+	}{
+		{name: "successful sync"},
+		{name: "failed sync", syncErr: syncFailure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			var polling bool
+			var cause error
+			manager := NewManager(Backend{
+				Sync:  func(context.Context, int64) (int, error) { return 0, tc.syncErr },
+				Watch: func(context.Context, int64, func()) error { return ErrNoIdle },
+				Status: func(_ context.Context, _ int64, mode string, err error) error {
+					if mode == "polling" {
+						polling, cause = true, err
+						cancel()
+					}
+					return nil
+				},
+			}, testOptions())
+			if err := manager.worker(ctx, 1); err != nil {
+				t.Fatal(err)
+			}
+			if !polling || !errors.Is(cause, tc.syncErr) {
+				t.Fatalf("polling=%v, cause=%v, want polling with cause %v", polling, cause, tc.syncErr)
+			}
+		})
+	}
+}

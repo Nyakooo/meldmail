@@ -274,8 +274,9 @@ func (s *Service) Sync(ctx context.Context, id int64) (count int, result error) 
 		return 0, fmt.Errorf("sync connect: %w", err)
 	}
 	defer func() {
+		closeStarted := time.Now()
 		if err := client.Close(); err != nil {
-			result = errors.Join(result, err)
+			logMailOperation(ctx, id, "sync_imap_close", closeStarted, err, -1)
 		}
 	}()
 	return client.Sync(ctx, s.Store, a, func(e storage.Email) error {

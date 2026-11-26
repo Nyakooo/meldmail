@@ -42,6 +42,10 @@ func Watch(ctx context.Context, a storage.Account, credentials auth.Credentials,
 	}
 	defer func() {
 		if err := c.Close(); err != nil && ctx.Err() == nil {
+			if result == syncer.ErrNoIdle {
+				slog.WarnContext(ctx, "mail closed without IDLE", "account_id", a.ID)
+				return
+			}
 			result = errors.Join(result, err)
 		}
 	}()
