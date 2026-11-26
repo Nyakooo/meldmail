@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"github.com/nyakooo/meldmail/internal/logging"
 	"github.com/nyakooo/meldmail/internal/mail/adapter"
 	"github.com/nyakooo/meldmail/internal/mail/imapclient"
 	"github.com/nyakooo/meldmail/internal/mail/syncer"
@@ -113,9 +115,8 @@ func (s *Service) ProcessFlagActions(ctx context.Context) error {
 				return err
 			}
 		}
-		if err := s.workerStatus(ctx, action.AccountID, "flag_retry", err); err != nil {
-			return err
-		}
+		attrs := []slog.Attr{slog.Int64("account_id", action.AccountID), slog.String("mode", "flag_retry")}
+		slog.Default().LogAttrs(ctx, slog.LevelWarn, "mail flag action failed", append(attrs, logging.Failure(err)...)...)
 	}
 	return nil
 }

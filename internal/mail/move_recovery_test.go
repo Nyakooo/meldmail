@@ -63,6 +63,27 @@ func TestRecoverAcknowledgedMove(t *testing.T) {
 	if !action.MoveAcknowledged || action.DestinationUID == 0 || action.DestinationName != "Archive" {
 		t.Fatalf("missing acknowledgement checkpoint: %+v", action)
 	}
+	// A missing destination must leave the pending move recoverable without
+	// reporting a reconnect for an account that can still sync.
+	if err := store.SetAccountStatus(ctx, account.ID, "active", ""); err != nil {
+		t.Fatal(err)
+	}
+	missing := action
+	missing.DestinationName = "Missing folder"
+	missing.NextAt = 0
+	if err := store.RetryFlagAction(ctx, missing); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ProcessFlagActions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.Account(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != "active" {
+		t.Fatalf("move recovery changed connected account status to %q", current.Status)
+	}
 	// Some providers return the source UIDVALIDITY in COPYUID.
 	action.DestinationValidity++
 	fixture.EmptyHeaderSearch()
