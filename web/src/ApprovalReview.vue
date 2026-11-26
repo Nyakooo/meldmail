@@ -28,8 +28,8 @@ onMounted(() => { dialog.value?.showModal(); void load() })
 onBeforeUnmount(() => { controller?.abort(); action.value = null; source.value = null; if (dialog.value?.open) dialog.value.close() })
 </script>
 <template>
- <dialog ref="dialog" class="approval-review" aria-labelledby="approval-title" @close="emit('close')" @cancel.prevent="!busy && dialog?.close()">
-  <header class="panel-heading"><div><p class="eyebrow">YOU HAVE THE FINAL SAY</p><h2 id="approval-title">{{ t("邮件发送审批") }}</h2></div><button class="icon-button" :disabled="busy" :aria-label="t('关闭审批')" @click="dialog?.close()">✕</button></header>
+ <dialog ref="dialog" class="approval-review content-dialog" aria-labelledby="approval-title" @close="emit('close')" @cancel.prevent="!busy && dialog?.close()">
+  <header class="panel-heading"><div><p class="eyebrow">YOU HAVE THE FINAL SAY</p><div class="dialog-title"><slot name="back" /><h2 id="approval-title">{{ t("邮件发送审批") }}</h2></div></div><button class="icon-button" :disabled="busy" :aria-label="t('关闭审批')" @click="dialog?.close()">✕</button></header>
   <div class="modal-scroll approval-content"><p v-if="error" class="error" role="alert">{{ t(error) }}</p>
   <template v-if="action"><p class="approval-status">{{ t(statuses[action.status] || action.status) }} · {{ action.token_name }}</p><dl class="approval-details"><dt>{{ t("发件人") }}</dt><dd>{{ action.sender_email }}</dd><dt>{{ t("收件人") }}</dt><dd>{{ action.payload.to?.join(', ') || t('（无）') }}</dd><template v-if="action.payload.cc?.length"><dt>{{ t("抄送") }}</dt><dd>{{ action.payload.cc.join(', ') }}</dd></template><dt>{{ t("主题") }}</dt><dd>{{ action.payload.subject || t('（无主题）') }}</dd></dl>
    <p v-if="action.error_msg" class="error">{{ action.error_msg }}</p><section v-if="action.body_available" class="approval-body"><h3>{{ action.payload.html ? t('HTML 源码（不会执行）') : action.action_type === 'forward' ? t('转发说明') : t('正文') }}</h3><pre>{{ action.payload.html || action.payload.text || t('（空正文）') }}</pre></section>

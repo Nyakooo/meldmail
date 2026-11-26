@@ -69,7 +69,7 @@ onBeforeUnmount(() => controller.abort())
 <template>
  <dialog ref="dialog" class="composer diagnostic-dialog" :class="{ maximized }" aria-labelledby="diagnostic-title" @close="emit('close')">
   <header class="panel-heading">
-   <h2 id="diagnostic-title">{{ t('诊断日志') }}</h2>
+   <div class="dialog-title"><slot name="back" /><h2 id="diagnostic-title">{{ t('诊断日志') }}</h2></div>
    <div class="diagnostic-actions">
     <button class="secondary" @click="maximized = !maximized">{{ t(maximized ? '还原窗口' : '最大化查看') }}</button>
     <button class="icon-button" :aria-label="t('关闭诊断日志')" @click="dialog?.close()">✕</button>

@@ -1,4 +1,7 @@
 {
+  "邮箱已保存": "Account saved",
+  "返回设置": "Back to settings",
+  "返回 AI 与 MCP": "Back to AI and MCP",
   "系统通知": "System notifications",
   "已开启通知": "On",
   "已关闭通知": "Off",
@@ -292,6 +295,7 @@
   "审批截止说明": "Approval expires: {time}. The body waits in memory only.",
   "邮箱已保存，正在同步…": "Account saved. Syncing…",
   "正在同步邮件…": "Syncing messages…",
+  "部分邮箱正在后台同步": "Some accounts are still syncing in the background",
   "同步完成": "Sync complete",
   "TLS 连接或证书校验失败，尚未验证授权码；请检查网络与代理": "TLS connection or certificate check failed before password authentication. Check network and proxy settings.",
   "代理配置无效": "Invalid proxy configuration",

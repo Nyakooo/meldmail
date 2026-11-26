@@ -5,17 +5,17 @@ import { t } from './i18n'
 import { ref, reactive, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import type { Account, Diagnostic } from './types'
 import { request, errorMessage } from './http'
-const props = defineProps<{ accounts: Account[]; initialAccountId?: number | null }>()
-const emit = defineEmits<{ close: []; changed: []; saved: [account: Account] }>()
+const props = defineProps<{ accounts: Account[]; initialAccountId?: number | null; section: 'account' | 'transfer' | 'proxy' }>()
+const emit = defineEmits<{ close: []; changed: [] }>()
 const panel = ref<HTMLElement | null>(null)
 const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
 const editing = ref<number | null>(null)
-const section = ref<'account' | 'transfer' | 'proxy'>('account')
-function openSection(value: 'transfer' | 'proxy') { cancelProxyRead(); section.value = value; error.value = ''; notice.value = ''; diagnostics.value = []; if (value === 'proxy') void loadProxy('/api/settings/proxy/edit', 'proxy') }
 const savedAuthType = ref('')
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
+const saveToast = ref(false)
+let toastTimer: ReturnType<typeof setTimeout> | undefined
 const diagnostics = ref<Diagnostic[]>([])
 const proxy = ref('')
 const currentProxy = ref('')
@@ -30,8 +30,8 @@ async function loadProxy(path: string, target: 'account' | 'proxy') {
  try {
   const data = await request<{ url: string }>(path, { signal: active.signal })
   if (active.signal.aborted || proxyRequest !== active) return
-  if (target === 'account' && section.value === 'account' && editing.value === account) form.proxy_url = data.url
-  if (target === 'proxy' && section.value === 'proxy') proxy.value = data.url
+  if (target === 'account' && props.section === 'account' && editing.value === account) form.proxy_url = data.url
+  if (target === 'proxy' && props.section === 'proxy') proxy.value = data.url
  } catch (err) { if (!active.signal.aborted) error.value = errorMessage(err) }
  finally { if (proxyRequest === active) { proxyLoading.value = false; proxyRequest = undefined } }
 }
@@ -40,7 +40,6 @@ const form = reactive({ email: '', display_name: '', provider: 'gmail', auth_typ
 function reset() {
  cancelProxyRead()
  void nextTick(() => { if (accountBody.value) accountBody.value.scrollTop = 0 })
- section.value = 'account'
  editing.value = null
  savedAuthType.value = ''
  Object.assign(form, { email: '', display_name: '', provider: 'gmail', auth_type: 'password', password: '', access_token: '', imap_host: '', imap_port: 993, imap_tls: 'implicit', smtp_host: '', smtp_port: 465, smtp_tls: 'implicit', proxy_mode: 'direct', proxy_url: '', status: 'active' })
@@ -70,7 +69,11 @@ async function save() {
  await action(async () => {
   const created = editing.value === null
   const saved = await request<Account>(created ? '/api/accounts' : `/api/accounts/${editing.value}`, { method: created ? 'POST' : 'PUT', body: JSON.stringify(payload()) })
-  emit('saved', saved)
+  edit(saved)
+  emit('changed')
+  clearTimeout(toastTimer)
+  saveToast.value = true
+  toastTimer = setTimeout(() => { saveToast.value = false }, 3500)
  })
 }
 function validateCredentials() {
@@ -94,9 +97,9 @@ async function refreshProxy() {
  try { const data = await request<{ url: string; managed: boolean }>('/api/settings/proxy'); currentProxy.value = data.url; proxyManaged.value = data.managed }
  catch (err) { error.value = errorMessage(err) }
 }
-function importedConfig() { emit('changed'); void refreshProxy() }
 async function saveProxy() {
  await action(async () => { const data = await request<{ url: string }>('/api/settings/proxy', { method: 'PUT', body: JSON.stringify({ url: proxy.value }) }); currentProxy.value = data.url; notice.value = t('共用代理已更新') })
+ if (document.activeElement === document.body) panel.value?.focus()
 }
 function trapFocus(event: KeyboardEvent) {
  if (event.key !== 'Tab') return
@@ -106,19 +109,27 @@ function trapFocus(event: KeyboardEvent) {
  if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.value)) { event.preventDefault(); last.focus() }
  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
 }
-onBeforeUnmount(() => { cancelProxyRead(); previousFocus?.focus() })
-onMounted(() => { if (props.initialAccountId) { const account = props.accounts.find(item => item.id === props.initialAccountId); if (account) edit(account) } panel.value?.focus(); void refreshProxy() })
+onBeforeUnmount(() => { clearTimeout(toastTimer); cancelProxyRead(); previousFocus?.focus() })
+onMounted(() => {
+ if (props.section === 'account' && props.initialAccountId) {
+  const account = props.accounts.find(item => item.id === props.initialAccountId)
+  if (account) edit(account)
+ }
+ panel.value?.focus()
+ if (props.section !== 'transfer') void refreshProxy()
+ if (props.section === 'proxy') void loadProxy('/api/settings/proxy/edit', 'proxy')
+})
 </script>
 <template>
  <div class="modal-shade" @click.self="emit('close')">
-  <section ref="panel" class="account-panel" tabindex="-1" @keydown="trapFocus" role="dialog" aria-modal="true" aria-labelledby="settings-title" @keydown.esc="emit('close')">
-   <header class="panel-heading"><div><p class="eyebrow">YOUR CONNECTIONS</p><h2 id="settings-title">{{ t("邮箱与连接") }}</h2></div><button class="icon-button" :aria-label="t('关闭设置')" @click="emit('close')">✕</button></header>
+  <section ref="panel" class="account-panel" :class="{ 'content-dialog': section !== 'account', 'proxy-dialog': section === 'proxy', 'transfer-dialog': section === 'transfer' }" tabindex="-1" @keydown="trapFocus" role="dialog" aria-modal="true" aria-labelledby="settings-title" @keydown.esc="emit('close')">
+   <header class="panel-heading"><div><p class="eyebrow">YOUR CONNECTIONS</p><div class="dialog-title"><slot name="back" /><h2 id="settings-title">{{ t(section === 'account' ? '邮箱与连接' : section === 'transfer' ? '导入 / 导出' : '共用代理') }}</h2></div></div><button class="icon-button" :aria-label="t('关闭设置')" @click="emit('close')">✕</button></header>
    <p v-if="error" class="error" role="alert">{{ t(error) }}</p><p v-if="notice" class="notice" role="status">{{ t(notice) }}</p>
-   <div class="account-settings-grid">
-    <aside><button class="secondary" @click="reset">{{ t("＋ 添加邮箱") }}</button><button class="secondary transfer-tab" :class="{ active: section === 'proxy' }" @click="openSection('proxy')">{{ t("共用代理（可选）") }}</button><button class="secondary transfer-tab" :class="{ active: section === 'transfer' }" @click="openSection('transfer')">{{ t("导入 / 导出") }}</button><ul class="saved-accounts"><li v-for="account in props.accounts" :key="account.id" :class="{ selected: section === 'account' && editing === account.id }"><button :class="{ active: section === 'account' && editing === account.id }" @click="edit(account)"><strong>{{ account.display_name || account.email }}</strong><small>{{ account.email }}</small></button><button class="delete-button" :disabled="busy" :aria-label="t('删除') + ' ' + account.email" :title="t('删除') + ' ' + account.email" @click="remove(account)"><Icon name="trash" /></button></li></ul></aside>
-    <div class="account-settings-content"><AccountTransfer v-if="section === 'transfer'" :count="accounts.length" @imported="importedConfig" />
+   <div class="account-settings-grid" :class="{ standalone: section !== 'account' }">
+    <aside v-if="section === 'account'"><button class="secondary" @click="reset">{{ t("＋ 添加邮箱") }}</button><ul class="saved-accounts"><li v-for="account in props.accounts" :key="account.id" :class="{ selected: editing === account.id }"><button :class="{ active: editing === account.id }" @click="edit(account)"><strong>{{ account.display_name || account.email }}</strong><small>{{ account.email }}</small></button><button class="delete-button" :disabled="busy" :aria-label="t('删除') + ' ' + account.email" :title="t('删除') + ' ' + account.email" @click="remove(account)"><Icon name="trash" /></button></li></ul></aside>
+    <div class="account-settings-content"><AccountTransfer v-if="section === 'transfer'" :count="accounts.length" @imported="emit('changed')" />
     <form v-else-if="section === 'proxy'" class="proxy-settings global-proxy-panel" @submit.prevent="saveProxy"><div class="modal-scroll">
-     <h3>{{ t('共用代理') }}</h3><p class="field-hint">{{ t('仅影响主动选择“使用共用代理”的邮箱；其他邮箱按各自的连接方式连接。') }}</p>
+     <p class="field-hint">{{ t('仅影响主动选择“使用共用代理”的邮箱；其他邮箱按各自的连接方式连接。') }}</p>
      <p class="connection-status-detail">{{ t('当前共用代理：') }}{{ currentProxy || t('未设置') }}</p>
      <label>{{ t('共用代理 URL') }}<input v-model="proxy" :readonly="proxyManaged" :disabled="busy || proxyLoading" type="text" inputmode="url" autocapitalize="none" :spellcheck="false" autocomplete="off" :placeholder="t('留空可清除共用代理')"></label>
      <p v-if="proxyManaged" class="field-hint">{{ t('共用代理由 .env 管理，请修改 MELDMAIL_HOST_PROXY_PORT 后重新部署。') }}</p><p v-else class="field-hint">{{ t('填写后，可让需要代理的邮箱主动选择复用。清空后，选择共用代理的邮箱将恢复直连。') }}</p>
@@ -150,7 +161,7 @@ onMounted(() => { if (props.initialAccountId) { const account = props.accounts.f
      <p v-if="form.auth_type === 'password'" id="mail-password-hint" class="field-hint">{{ form.provider === 'gmail' ? t('填写应用专用密码，不是 Google 登录密码。粘贴时的分组空格会自动去除。') : t('请先在邮箱服务商处开启 IMAP / SMTP，并按要求生成授权码。') }}</p>
      <template v-if="form.provider === 'custom' || editing !== null"><div class="form-row server-row"><label>{{ t("IMAP 主机") }}<input v-model="form.imap_host" required></label><label class="port-field">{{ t("端口") }}<input v-model.number="form.imap_port" type="number" min="1" max="65535" required></label><label>TLS<select v-model="form.imap_tls"><option value="implicit">{{ t("隐式 TLS") }}</option><option value="starttls">STARTTLS</option></select></label></div><div class="form-row server-row"><label>{{ t("SMTP 主机") }}<input v-model="form.smtp_host" required></label><label class="port-field">{{ t("端口") }}<input v-model.number="form.smtp_port" type="number" min="1" max="65535" required></label><label>TLS<select v-model="form.smtp_tls"><option value="implicit">{{ t("隐式 TLS") }}</option><option value="starttls">STARTTLS</option></select></label></div></template>
      <div class="form-row connection-row"><label>{{ t("连接方式") }}<select v-model="form.proxy_mode" :disabled="proxyLoading"><option value="direct">{{ t("直接连接（推荐）") }}</option><option v-if="currentProxy || form.proxy_mode === 'global'" value="global">{{ currentProxy ? t("使用共用代理") : t("共用代理未设置（当前直连）") }}</option><option value="http">{{ t("HTTP 代理") }}</option><option value="https">{{ t("HTTPS 代理") }}</option><option value="socks5">{{ t("SOCKS5 代理") }}</option></select></label><label>{{ t("同步") }}<select v-model="form.status"><option value="active">{{ t("启用") }}</option><option value="paused">{{ t("暂停") }}</option></select></label></div>
-     <p class="field-hint">{{ form.proxy_mode === 'global' ? (currentProxy ? t('此邮箱使用共用代理：') + currentProxy : t('共用代理尚未配置，此邮箱当前使用直连。')) : form.proxy_mode === 'direct' ? t('此邮箱直接连接，不受共用代理设置影响。') : t('此代理只用于当前邮箱的收信和发信。') }} <button v-if="form.proxy_mode === 'global'" class="text-button" type="button" @click="openSection('proxy')">{{ t('管理共用代理') }}</button></p>
+     <p class="field-hint">{{ form.proxy_mode === 'global' ? (currentProxy ? t('此邮箱使用共用代理：') + currentProxy : t('共用代理尚未配置，此邮箱当前使用直连。')) : form.proxy_mode === 'direct' ? t('此邮箱直接连接，不受共用代理设置影响。') : t('此代理只用于当前邮箱的收信和发信。') }}</p>
      <label v-if="!['global', 'direct'].includes(form.proxy_mode)" class="account-proxy-url">{{ t("代理 URL") }}<input v-model="form.proxy_url" :disabled="proxyLoading" required type="text" inputmode="url" autocapitalize="none" :spellcheck="false" autocomplete="off" placeholder="socks5://user:password@host:port"></label>
      <p v-if="!['global', 'direct'].includes(form.proxy_mode)" class="field-hint">{{ t("例如 HTTP 使用 http://代理地址:端口，SOCKS5 使用 socks5://代理地址:端口。Docker 中的 127.0.0.1 指向容器自身；宿主机代理需使用容器可访问的地址。") }}</p>
      <ul v-if="diagnostics.length" class="diagnostics"><li v-for="d in diagnostics" :key="d.stage" :class="d.ok ? 'notice' : 'error'">{{ d.ok ? '✓' : '✕' }} {{ d.stage }} · {{ t(d.message) }}</li></ul>
@@ -158,6 +169,21 @@ onMounted(() => { if (props.initialAccountId) { const account = props.accounts.f
     </form></div>
    </div>
 
+   <div class="account-toast" role="status" aria-live="polite"><span v-if="saveToast">{{ t('邮箱已保存') }}</span></div>
   </section>
  </div>
 </template>
+
+<style scoped>
+.account-panel { position: relative; }
+.account-toast { position: absolute; inset: auto 16px 68px; display: flex; justify-content: center; pointer-events: none; }
+.account-toast > span { padding: 8px 16px; border-radius: 8px; background: var(--text); color: var(--surface); box-shadow: var(--modal-shadow); }
+.account-panel.proxy-dialog { --dialog-width: 520px; }
+.account-panel.transfer-dialog { --dialog-width: 880px; }
+.account-settings-grid.standalone { display: flex; flex-direction: column; }
+.global-proxy-panel { align-items: stretch; }
+.global-proxy-panel > .modal-scroll { scrollbar-gutter: auto; }
+.global-proxy-panel .field-hint:first-child { margin-top: 0; }
+.global-proxy-panel .form-actions { justify-content: flex-end; }
+.account-settings-grid > aside { grid-template-columns: minmax(0, 1fr); }
+</style>
