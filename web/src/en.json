@@ -1,4 +1,13 @@
 {
+  "系统通知": "System notifications",
+  "已开启通知": "On",
+  "已关闭通知": "Off",
+  "系统通知需要 HTTPS 和受支持的桌面浏览器。": "System notifications require HTTPS and a supported desktop browser.",
+  "请在浏览器站点设置中允许通知。": "Allow notifications in your browser site settings.",
+  "未授予通知权限。": "Notification permission was not granted.",
+  "无法启用系统通知。": "Could not enable system notifications.",
+  "MeldMail 有新邮件": "New mail in MeldMail",
+  "MeldMail 有待审批的发信请求": "MeldMail has a send request to review",
   "日志级别": "Log level",
   "全部级别": "All levels",
   "信息": "Info",

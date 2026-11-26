@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Icon from './Icon.vue'
+import { useSystemNotifications } from './systemNotifications'
 import { t, locale } from './i18n'
 import LanguageToggle from './LanguageToggle.vue'
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
@@ -15,6 +16,7 @@ import ApprovalReview from './ApprovalReview.vue'
 import type { Account, Email, EmailPage, EmailUpdate, ComposeAction, Approval, SystemStats as StatsData, CategoryCounts } from './types'
 import { request, errorMessage } from './http'
 const emit = defineEmits<{ logout: []; passwordChanged: [] }>()
+const { notificationsEnabled, toggleNotifications, notify } = useSystemNotifications()
 const logsOpen = ref(false)
 const accounts = ref<Account[]>([])
 const emails = ref<Email[]>([])
@@ -152,12 +154,19 @@ function applyFlags(update: EmailUpdate) {
 }
 function compose(action: ComposeAction = 'send') { composing.value = { action, original: action === 'send' ? undefined : selected.value || undefined } }
 async function refreshMCP() { try { const actions = await request<Approval[]>('/api/mcp/approvals'); pendingApprovals.value = actions.filter(action => action.status === 'pending').length; mcpRevision.value++ } catch (err) { error.value = errorMessage(err) } }
+async function changeNotificationPreference() {
+ const message = await toggleNotifications()
+ notice.value = message ? t(message) : ''
+}
 function startEvents() {
  events = new EventSource('/api/events')
  events.onopen = () => { connected.value = true; scheduleRefresh(); void refreshMCP() }
  events.onerror = () => { connected.value = false }
  events.addEventListener('new_email', (event: MessageEvent<string>) => {
-  try { const email = JSON.parse(event.data) as Email
+  try { const email = JSON.parse(event.data) as Email & { from_sync?: boolean }
+   if (email.from_sync && email.folder_role === 'inbox' && !email.is_read && email.date >= Date.now() / 1000 - 300) {
+    notify(t('MeldMail 有新邮件'), `mail-${email.account_id}`)
+   }
    if (!email.folder_role) { scheduleRefresh(); return }
    if (selected.value?.id === email.id) selected.value = matches(email) ? email : null
    emails.value = emails.value.filter(item => item.id !== email.id)
@@ -169,7 +178,7 @@ function startEvents() {
   try { applyFlags(JSON.parse(event.data) as EmailUpdate); scheduleRefresh() } catch { error.value = t('邮件状态更新失败，请重新加载列表') }
  })
  events.addEventListener('mcp_approval_required', (event: MessageEvent<string>) => {
-  try { const update = JSON.parse(event.data) as { action_id: string; status: string }; void refreshMCP(); if (update.status === 'pending' && !reviewId.value) reviewId.value = update.action_id } catch { error.value = t('审批通知读取失败') }
+  try { const update = JSON.parse(event.data) as { action_id: string; status: string }; void refreshMCP(); if (update.status === 'pending') { notify(t('MeldMail 有待审批的发信请求'), `approval-${update.action_id}`); if (!reviewId.value) reviewId.value = update.action_id } } catch { error.value = t('审批通知读取失败') }
  })
  events.addEventListener('sync_status', (event: MessageEvent<string>) => {
   try { const update = JSON.parse(event.data) as { account_id: number; status: string; last_error: string; mode?: string }; const account = accounts.value.find(a => a.id === update.account_id); if (account) { account.status = update.status; account.last_error = update.last_error } if (initialSync.value === update.account_id) { if (update.status === 'error') { initialSync.value = null; notice.value = ''; error.value = update.last_error || t('连接失败') } else if (update.mode === 'idle') { initialSync.value = null; notice.value = t('同步完成'); scheduleRefresh() } } } catch { error.value = t('同步状态更新失败') }
@@ -194,6 +203,7 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
      <button @click="mcpOpen = true; sidebarOpen = false"><Icon name="code" /><span>{{ t('AI 与 MCP') }}</span><span v-if="pendingApprovals" class="approval-badge">{{ pendingApprovals }}</span></button>
      <button @click="passwordOpen = true; sidebarOpen = false"><Icon name="key" /><span>{{ t('修改登录密码') }}</span></button>
      <button @click="logsOpen = true; sidebarOpen = false"><Icon name="code" /><span>{{ t('诊断日志') }}</span></button>
+     <button :aria-pressed="notificationsEnabled" @click="changeNotificationPreference"><Icon name="bell" /><span>{{ t('系统通知') }} · {{ notificationsEnabled ? t('已开启通知') : t('已关闭通知') }}</span></button>
      <button class="logout-button" @click="emit('logout')"><Icon name="logout" /><span>{{ t('退出登录') }}</span></button>
     </nav>
    </div>

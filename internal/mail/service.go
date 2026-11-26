@@ -277,7 +277,12 @@ func (s *Service) Sync(ctx context.Context, id int64) (count int, result error) 
 			result = errors.Join(result, err)
 		}
 	}()
-	return client.Sync(ctx, s.Store, a, func(e storage.Email) error { return s.Events.Publish("new_email", e) })
+	return client.Sync(ctx, s.Store, a, func(e storage.Email) error {
+		return s.Events.Publish("new_email", struct {
+			storage.Email
+			FromSync bool `json:"from_sync"`
+		}{Email: e, FromSync: true})
+	})
 }
 
 type Diagnostic struct {
