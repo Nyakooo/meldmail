@@ -1,4 +1,9 @@
 {
+  "日志级别": "Log level",
+  "全部级别": "All levels",
+  "信息": "Info",
+  "警告": "Warning",
+  "错误": "Error",
   "最大化查看": "Maximize",
   "还原窗口": "Restore window",
   "清屏": "Clear screen",

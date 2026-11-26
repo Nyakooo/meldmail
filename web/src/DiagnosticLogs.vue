@@ -9,7 +9,8 @@ const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement | null>(null)
 const output = ref<HTMLPreElement | null>(null)
 const accountId = ref(0)
-const entries = ref<Array<{ account_id?: number }>>([])
+const level = ref('')
+const entries = ref<Array<{ account_id?: number; level?: string }>>([])
 const busy = ref(false)
 const maximized = ref(false)
 const cleared = ref(false)
@@ -18,6 +19,7 @@ const notice = ref('')
 const controller = new AbortController()
 const visibleLogs = computed(() => entries.value
  .filter(entry => accountId.value === 0 || entry.account_id === accountId.value)
+ .filter(entry => !level.value || entry.level === level.value)
  .map(entry => JSON.stringify(entry))
  .join('\n'))
 
@@ -77,6 +79,12 @@ onBeforeUnmount(() => controller.abort())
    <select v-model="accountId" :aria-label="t('筛选邮箱')" @change="notice = ''">
     <option :value="0">{{ t('所有邮箱') }}</option>
     <option v-for="account in accounts" :key="account.id" :value="account.id">{{ account.display_name || account.email }}</option>
+   </select>
+   <select v-model="level" :aria-label="t('日志级别')" @change="notice = ''">
+    <option value="">{{ t('全部级别') }}</option>
+    <option value="INFO">{{ t('信息') }}</option>
+    <option value="WARN">{{ t('警告') }}</option>
+    <option value="ERROR">{{ t('错误') }}</option>
    </select>
    <button class="secondary" :disabled="busy" @click="refresh">{{ busy ? t('正在读取…') : t('刷新日志') }}</button>
    <button class="secondary" :disabled="!visibleLogs" @click="copy">{{ t('复制日志') }}</button>
