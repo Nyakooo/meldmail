@@ -4,12 +4,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
 type Config struct {
 	Addr, DBPath, AdminPassword string
 	HostProxyURL                string
+	LogDir                      string
 	MasterKey                   []byte
 	TrustProxy                  bool
 }
@@ -21,6 +23,10 @@ func Load() (Config, error) {
 	}
 	if c.DBPath == "" {
 		c.DBPath = "data/meldmail.db"
+	}
+	c.LogDir = os.Getenv("MELDMAIL_LOG_DIR")
+	if c.LogDir == "" {
+		c.LogDir = filepath.Join(filepath.Dir(c.DBPath), "logs")
 	}
 	key, err := hex.DecodeString(os.Getenv("MELDMAIL_MASTER_KEY"))
 	if err != nil || len(key) != 32 {

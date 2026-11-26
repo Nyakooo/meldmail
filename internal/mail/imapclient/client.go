@@ -19,9 +19,10 @@ type Dialer interface {
 	DialContext(context.Context, string, string) (net.Conn, error)
 }
 type Client struct {
-	IMAP *upstream.Client
-	conn net.Conn
-	stop func() bool
+	IMAP      *upstream.Client
+	accountID int64
+	conn      net.Conn
+	stop      func() bool
 }
 
 func Open(ctx context.Context, a storage.Account, credentials auth.Credentials, d Dialer, tlsConfig *tls.Config) (result *Client, err error) {
@@ -69,7 +70,7 @@ func open(ctx context.Context, a storage.Account, credentials auth.Credentials, 
 	default:
 		return nil, fmt.Errorf("imap: TLS is required")
 	}
-	result = &Client{IMAP: client, conn: conn, stop: stop}
+	result = &Client{IMAP: client, conn: conn, stop: stop, accountID: a.ID}
 	defer func() {
 		if err != nil {
 			if e := result.Close(); e != nil {

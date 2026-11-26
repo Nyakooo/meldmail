@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
@@ -60,6 +61,7 @@ func (c *Client) watch(ctx context.Context, interval time.Duration, notify func(
 		if err != nil {
 			return fmt.Errorf("imap IDLE: %w", err)
 		}
+		slog.InfoContext(ctx, "mail IDLE entered", "account_id", c.accountID, "renew_after_seconds", int64(interval.Seconds()))
 		notify()
 		timer := time.NewTimer(interval)
 		var cause error
@@ -70,6 +72,7 @@ func (c *Client) watch(ctx context.Context, interval time.Duration, notify func(
 				cause = ctx.Err()
 				break waiting
 			case <-timer.C:
+				slog.InfoContext(ctx, "mail IDLE renewal", "account_id", c.accountID)
 				break waiting
 			case <-health.C:
 				if c.IMAP.State() == imap.ConnStateLogout {

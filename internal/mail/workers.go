@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"github.com/nyakooo/meldmail/internal/logging"
 	"github.com/nyakooo/meldmail/internal/mail/imapclient"
 	"github.com/nyakooo/meldmail/internal/mail/syncer"
 	"github.com/nyakooo/meldmail/internal/storage"
@@ -60,7 +62,10 @@ func (s *Service) workerAccounts(ctx context.Context) ([]syncer.Account, error) 
 	}
 	return result, nil
 }
-func (s *Service) watchAccount(ctx context.Context, id int64, notify func()) error {
+func (s *Service) watchAccount(ctx context.Context, id int64, notify func()) (result error) {
+	started := time.Now()
+	slog.InfoContext(ctx, "mail operation started", "account_id", id, "operation", "watch")
+	defer func() { logMailOperation(ctx, id, "watch", started, result, -1) }()
 	a, err := s.Store.Account(ctx, id)
 	if err != nil {
 		return err
@@ -76,6 +81,8 @@ func (s *Service) watchAccount(ctx context.Context, id int64, notify func()) err
 	return imapclient.Watch(ctx, a, credentials, d, s.TLSConfig, notify)
 }
 func (s *Service) reconcileAccount(ctx context.Context, id int64) (result error) {
+	started := time.Now()
+	defer func() { logMailOperation(ctx, id, "reconcile", started, result, -1) }()
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	release, err := s.Limiter.Acquire(ctx, id)
@@ -107,6 +114,13 @@ func (s *Service) reconcileAccount(ctx context.Context, id int64) (result error)
 	return c.Reconcile(ctx, s.Store, a, func(flags storage.EmailFlags) error { return s.Events.Publish("flag_updated", flags) })
 }
 func (s *Service) workerStatus(ctx context.Context, id int64, mode string, cause error) error {
+	attrs := []slog.Attr{slog.Int64("account_id", id), slog.String("mode", mode)}
+	attrs = append(attrs, logging.Failure(cause)...)
+	level := slog.LevelInfo
+	if cause != nil {
+		level = slog.LevelWarn
+	}
+	slog.Default().LogAttrs(ctx, level, "mail worker status", attrs...)
 	status := "active"
 	diagnostic := ""
 	if cause != nil {
@@ -117,4 +131,24 @@ func (s *Service) workerStatus(ctx context.Context, id int64, mode string, cause
 		return err
 	}
 	return s.Events.Publish("sync_status", map[string]interface{}{"account_id": id, "status": status, "mode": mode, "last_error": diagnostic})
+}
+
+func logMailOperation(ctx context.Context, id int64, operation string, started time.Time, cause error, count int) {
+	attrs := []slog.Attr{slog.Int64("account_id", id), slog.String("operation", operation), slog.Int64("duration_ms", time.Since(started).Milliseconds())}
+	if count >= 0 {
+		attrs = append(attrs, slog.Int("messages", count))
+	}
+	outcome := "success"
+	level := slog.LevelInfo
+	if cause != nil {
+		outcome = "failed"
+		level = slog.LevelWarn
+		if errors.Is(cause, context.Canceled) && ctx.Err() == context.Canceled {
+			outcome = "canceled"
+			level = slog.LevelInfo
+		}
+		attrs = append(attrs, logging.Failure(cause)...)
+	}
+	attrs = append(attrs, slog.String("outcome", outcome))
+	slog.Default().LogAttrs(ctx, level, "mail operation completed", attrs...)
 }

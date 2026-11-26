@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -159,6 +160,7 @@ func (m *Manager) worker(ctx context.Context, id int64) (result error) {
 		if statusErr := m.backend.Status(ctx, id, mode, err); statusErr != nil {
 			return statusErr
 		}
+		slog.InfoContext(ctx, "mail retry scheduled", "account_id", id, "mode", mode, "failures", failures, "retry_after_ms", delay.Milliseconds())
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():

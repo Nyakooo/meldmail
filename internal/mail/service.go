@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	netmail "net/mail"
 	"strings"
@@ -239,9 +240,12 @@ func (s *Service) Dialer(ctx context.Context, a storage.Account) (*proxy.Dialer,
 	if err != nil {
 		return nil, err
 	}
+	slog.InfoContext(ctx, "mail connection configured", "account_id", a.ID, "provider", a.Provider, "proxy_mode", mode)
 	return proxy.New(mode, endpoint, global)
 }
 func (s *Service) Sync(ctx context.Context, id int64) (count int, result error) {
+	started := time.Now()
+	defer func() { logMailOperation(ctx, id, "sync", started, result, count) }()
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	release, err := s.Limiter.Acquire(ctx, id)
@@ -294,6 +298,7 @@ func (s *Service) Test(ctx context.Context, a storage.Account) []Diagnostic {
 		return append(result, Diagnostic{"credentials", false, "凭据解密失败"})
 	}
 	imapCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	imapStarted := time.Now()
 	c, err := imapclient.Open(imapCtx, a, credentials, d, s.TLSConfig)
 	if err != nil {
 		result = append(result, Diagnostic{"imap", false, diagnose(err)})
@@ -301,9 +306,11 @@ func (s *Service) Test(ctx context.Context, a storage.Account) []Diagnostic {
 		err = c.Close()
 		result = append(result, Diagnostic{"imap", err == nil, "IMAP TLS、认证与服务商适配完成"})
 	}
+	logMailOperation(imapCtx, a.ID, "test_imap", imapStarted, err, -1)
 	cancel()
 	smtpCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
+	smtpStarted := time.Now()
 	smtp, err := smtpclient.Open(smtpCtx, a, credentials, d, s.TLSConfig)
 	if err != nil {
 		result = append(result, Diagnostic{"smtp", false, diagnose(err)})
@@ -311,6 +318,7 @@ func (s *Service) Test(ctx context.Context, a storage.Account) []Diagnostic {
 		err = smtp.Close()
 		result = append(result, Diagnostic{"smtp", err == nil, "SMTP TLS 与认证完成（未发送邮件）"})
 	}
+	logMailOperation(smtpCtx, a.ID, "test_smtp", smtpStarted, err, -1)
 	return result
 }
 func diagnose(err error) string {

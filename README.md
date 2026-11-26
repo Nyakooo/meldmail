@@ -266,3 +266,18 @@ go run ./cmd/meldmail
 - [界面设计参考](docs/DESIGN.md)
 - [第三方依赖声明](THIRD_PARTY_NOTICES.md)
 - [Apache-2.0 许可证](LICENSE)
+
+### 诊断日志（保留 7 天）
+
+程序按 UTC 日期写入 JSON 日志，默认目录为数据库旁的 `logs/`。默认 Docker 部署对应宿主机 `./data/logs/meldmail-YYYY-MM-DD.jsonl`，随现有数据卷持久化；同时输出到 `docker logs meldmail`。保留当天及前 6 天，在启动、跨日写入及每小时检查时清理过期日志。只清理该目录下符合命名规则的日志文件，不需要额外服务。
+
+记录后台同步、IDLE 建立与续接、断开与重试模式、账号 ID、连接方式、耗时和安全错误分类。`account_id` 可与邮箱列表 API 的账号 ID 对应；`stage` 标明操作阶段，`reason` 区分 EOF、超时、连接重置等，IMAP 拒绝响应只记录受限的状态及错误代码。不会记录密码、授权码、Token、主密钥、代理 URL、邮件正文或服务端原始错误文本。
+
+```bash
+# 查看最新诊断
+ tail -n 100 ./data/logs/meldmail-*.jsonl
+# 按账号筛选（示例账号 ID 为 1）
+ grep '"account_id":1[,}]' ./data/logs/meldmail-*.jsonl
+```
+
+独立运行可用 `MELDMAIL_LOG_DIR` 自定义目录。默认 Compose 已自动持久化日志；如需更改容器中的目录，请在 Compose 中传入该变量并挂载对应目录。更新镜像并重新创建容器后，这套日志才会开始记录；此前的错误无法追溯。

@@ -13,14 +13,20 @@ func TestLoad(t *testing.T) {
 	}
 	t.Setenv("MELDMAIL_MASTER_KEY", strings.Repeat("ab", 32))
 	t.Setenv("MELDMAIL_ADDR", "")
+	t.Setenv("MELDMAIL_LOG_DIR", "")
 	t.Setenv("MELDMAIL_DB_PATH", "")
 	t.Setenv("MELDMAIL_TRUST_PROXY", "true")
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Addr != ":8080" || !c.TrustProxy || len(c.MasterKey) != 32 {
+	if c.LogDir != "data/logs" || c.Addr != ":8080" || !c.TrustProxy || len(c.MasterKey) != 32 {
 		t.Fatal("incorrect config")
+	}
+	t.Setenv("MELDMAIL_LOG_DIR", "/custom/logs")
+	c, err = Load()
+	if err != nil || c.LogDir != "/custom/logs" {
+		t.Fatal("custom log directory ignored", err)
 	}
 	t.Setenv("MELDMAIL_TRUST_PROXY", "invalid")
 	if _, err := Load(); err == nil {

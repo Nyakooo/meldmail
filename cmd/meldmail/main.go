@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/nyakooo/meldmail/internal/api"
 	"github.com/nyakooo/meldmail/internal/config"
+	"github.com/nyakooo/meldmail/internal/logging"
 	"github.com/nyakooo/meldmail/internal/mail"
 	"github.com/nyakooo/meldmail/internal/mail/syncer"
 	"github.com/nyakooo/meldmail/internal/storage"
@@ -27,6 +29,30 @@ func run() (result error) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	files, err := logging.Open(c.LogDir)
+	if err != nil {
+		return err
+	}
+	logger := slog.New(slog.NewJSONHandler(io.MultiWriter(os.Stdout, files), nil))
+	slog.SetDefault(logger)
+	logDone := make(chan error, 1)
+	logCtx, cancelLogs := context.WithCancel(context.Background())
+	go func() { logDone <- files.Maintain(logCtx) }()
+	defer func() {
+		if result != nil {
+			logger.LogAttrs(context.Background(), slog.LevelError, "application stopped", logging.Failure(result)...)
+		} else {
+			logger.Info("application stopped")
+		}
+		cancelLogs()
+		if err := <-logDone; err != nil {
+			result = errors.Join(result, err)
+		}
+		if err := files.Close(); err != nil {
+			result = errors.Join(result, err)
+		}
+	}()
+	logger.Info("application starting", "log_retention_days", 7)
 	store, err := storage.Open(ctx, c.DBPath)
 	if err != nil {
 		return err
@@ -112,7 +138,7 @@ func run() (result error) {
 }
 func main() {
 	if err := run(); err != nil {
-		log.Print(err)
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).LogAttrs(context.Background(), slog.LevelError, "application failed", logging.Failure(err)...)
 		os.Exit(1)
 	}
 }
