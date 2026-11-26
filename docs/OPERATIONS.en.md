@@ -179,6 +179,8 @@ With no port configured, the default deployment keeps bridge networking. Host mo
 
 ## Releases
 
+Before tagging a version, add user-facing notes in `releases/<tag>.md` and include the file in the tagged commit. Updating that file on `master` also updates an existing GitHub Release.
+
 Pushing a `v*` tag creates the corresponding GitHub Release after the GHCR image is pushed. To create a missing release page for a tag with an existing image, manually run **Publish GHCR image and release** from `master` and enter the tag, such as `v0.1.0`, in `release_tag`. The workflow checks the tagged GHCR image first.
 
 ## Updates, rollback and cleanup

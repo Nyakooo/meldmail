@@ -178,6 +178,8 @@ docker compose -f docker-compose.yml -f docker-compose.host-proxy.yml up -d --bu
 
 ## 版本发布
 
+打标签前，在 `releases/<标签>.md` 编写面向用户的发布说明，并将文件提交到待打标签的版本。把修订后的说明推送到 `master`，也会更新已有的 GitHub Release。
+
 推送 `v*` 标签后，Actions 在 GHCR 镜像推送成功后创建对应的 GitHub Release。若旧标签已有镜像但缺少 Release 页面，在 Actions 中手动运行 **Publish GHCR image and release**，选择 `master` 并填写 `release_tag`（如 `v0.1.0`）。工作流会先检查对应的 GHCR 镜像。
 
 ## 更新、回滚与清理

@@ -1,0 +1,42 @@
+name: Update published release notes
+
+on:
+  push:
+    branches: [master]
+    paths: ['releases/v*.md']
+
+permissions:
+  contents: write
+
+jobs:
+  update-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Apply changed notes to existing releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          changed=$(git diff --name-only --diff-filter=AMR "$BEFORE_SHA" "$GITHUB_SHA" -- releases/)
+          while IFS= read -r notes; do
+            [[ "$notes" =~ ^releases/(v[a-zA-Z0-9_.-]+)\.md$ ]] || continue
+            tag=${BASH_REMATCH[1]}
+            if [[ ! -s "$notes" ]]; then
+              echo "::error file=$notes::Release notes must not be empty."
+              exit 1
+            fi
+            if result=$(gh release view "$tag" --json url --jq .url 2>&1); then
+              gh release edit "$tag" --notes-file "$notes"
+              echo "$result"
+            elif [[ "$result" == "release not found" ]]; then
+              echo "Release $tag does not exist yet. Notes will be used when it is published."
+            else
+              echo "$result" >&2
+              exit 1
+            fi
+          done <<< "$changed"
