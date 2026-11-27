@@ -30,6 +30,10 @@ func (c FlagChange) Valid() bool {
 	return moves <= 1 && (c.IsRead != nil || c.IsStarred != nil || moves == 1)
 }
 
+func (c FlagChange) HasMove() bool {
+	return c.Archive || c.Delete || c.Restore
+}
+
 type FlagAction struct {
 	MoveAcknowledged    bool   `json:"move_acknowledged,omitempty"`
 	DestinationName     string `json:"destination_name,omitempty"`
@@ -37,6 +41,7 @@ type FlagAction struct {
 	DestinationUID      uint32 `json:"destination_uid,omitempty"`
 	DestinationValidity uint32 `json:"destination_validity,omitempty"`
 	MoveStarted         bool   `json:"move_started,omitempty"`
+	Revision            int64  `json:"revision,omitempty"`
 
 	EmailID    int64      `json:"email_id"`
 	AccountID  int64      `json:"account_id"`
@@ -50,7 +55,15 @@ type FlagAction struct {
 	NextAt     int64      `json:"next_at"`
 }
 
-const flagKeyPrefix = "flag_action:"
+func (a FlagAction) BlocksPurge() bool {
+	return a.MoveStarted || a.Change.HasMove()
+}
+
+const (
+	flagKeyPrefix  = "flag_action:"
+	maxFlagActions = 512
+	maxBatchEmails = 100
+)
 
 // idSQL is a trusted column reference supplied only by this storage package.
 func pendingFlagsSQL(idSQL string) string {
@@ -64,12 +77,80 @@ func pendingRemovalSQL(idSQL string, archive bool) string {
 	return pendingMoveSQL(idSQL, field)
 }
 func pendingMoveSQL(idSQL, field string) string {
-	// Materialize at most 128 pending IDs once, rather than a correlated
-	// settings lookup for every row in a full filtered-count query.
+	// Materialize pending IDs once, rather than a correlated settings lookup
+	// for every row in a full filtered-count query.
 	numericID := "CAST(substr(pending.key," + strconv.Itoa(len(flagKeyPrefix)+1) + ") AS INTEGER)"
 	return "(" + idSQL + " IN (SELECT " + numericID + " FROM settings pending WHERE pending.key GLOB '" + flagKeyPrefix + "*' AND pending.key='" + flagKeyPrefix + "'||" + numericID + " AND json_extract(pending.value,'$.change." + field + "')=1))"
 }
 func flagKey(id int64) string { return flagKeyPrefix + strconv.FormatInt(id, 10) }
+
+func validFolderChange(e Email, change FlagChange) bool {
+	if change.Restore && e.FolderRole != "trash" && e.FolderRole != "archive" {
+		return false
+	}
+	if (change.Archive || change.Delete) && e.FolderRole == "trash" {
+		return false
+	}
+	return true
+}
+
+func enqueueFlagTx(ctx context.Context, tx *sql.Tx, e Email, change FlagChange, queueCount *int) (Email, error) {
+	var existingValue string
+	err := tx.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=?", flagKey(e.ID)).Scan(&existingValue)
+	isNew := errors.Is(err, sql.ErrNoRows)
+	if err != nil && !isNew {
+		return e, fmt.Errorf("storage pending flag: %w", err)
+	}
+	var action FlagAction
+	if isNew {
+		if *queueCount < 0 {
+			if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM settings WHERE key GLOB 'flag_action:*'").Scan(queueCount); err != nil {
+				return e, fmt.Errorf("storage flag count: %w", err)
+			}
+		}
+		if *queueCount >= maxFlagActions {
+			return e, fmt.Errorf("storage: flag queue full")
+		}
+		var f Folder
+		if err := tx.QueryRowContext(ctx, "SELECT id,account_id,name,role,uid_validity,last_uid FROM folders WHERE id=?", e.FolderID).Scan(&f.ID, &f.AccountID, &f.Name, &f.Role, &f.UIDValidity, &f.LastUID); err != nil {
+			return e, fmt.Errorf("storage flag folder: %w", err)
+		}
+		action = FlagAction{Revision: 1, EmailID: e.ID, AccountID: e.AccountID, Folder: f, UID: e.UID, MessageID: e.MessageID, Change: change, OldRead: e.IsRead, OldStarred: e.IsStarred}
+	} else {
+		if err := json.Unmarshal([]byte(existingValue), &action); err != nil {
+			return e, fmt.Errorf("storage pending flag decode: %w", err)
+		}
+		if action.MoveStarted || action.Change.HasMove() {
+			return e, ErrActionPending
+		}
+		action = coalesceFlagAction(action, change)
+	}
+	data, err := json.Marshal(action)
+	if err != nil {
+		return e, fmt.Errorf("storage flag JSON: %w", err)
+	}
+	if isNew {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO settings(key,value,updated_at) VALUES(?,?,?)", flagKey(e.ID), string(data), time.Now().Unix()); err != nil {
+			return e, fmt.Errorf("storage enqueue flags: %w", err)
+		}
+		*queueCount++
+	} else {
+		if _, err := tx.ExecContext(ctx, "UPDATE settings SET value=?,updated_at=? WHERE key=?", string(data), time.Now().Unix(), flagKey(e.ID)); err != nil {
+			return e, fmt.Errorf("storage coalesce flags: %w", err)
+		}
+	}
+	if change.IsRead != nil {
+		e.IsRead = *change.IsRead
+	}
+	if change.IsStarred != nil {
+		e.IsStarred = *change.IsStarred
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE emails SET is_read=?,is_starred=? WHERE id=?", e.IsRead, e.IsStarred, e.ID); err != nil {
+		return e, fmt.Errorf("storage optimistic flags: %w", err)
+	}
+	return e, nil
+}
+
 func (s *Store) QueueFlags(ctx context.Context, id int64, change FlagChange) (updated Email, resultErr error) {
 	if !change.Valid() {
 		return Email{}, ErrInvalidQuery
@@ -89,50 +170,96 @@ func (s *Store) QueueFlags(ctx context.Context, id int64, change FlagChange) (up
 	if err != nil {
 		return e, err
 	}
-	if change.Restore && e.FolderRole != "trash" && e.FolderRole != "archive" || change.Archive && e.FolderRole == "trash" || change.Delete && e.FolderRole == "trash" {
+	if !validFolderChange(e, change) {
 		return e, ErrInvalidQuery
 	}
-	var count int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM settings WHERE key=?", flagKey(id)).Scan(&count); err != nil {
-		return e, fmt.Errorf("storage pending flag: %w", err)
-	}
-	if count > 0 {
-		return e, ErrActionPending
-	}
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM settings WHERE key GLOB 'flag_action:*'").Scan(&count); err != nil {
-		return e, fmt.Errorf("storage flag count: %w", err)
-	}
-	if count >= 128 {
-		return e, fmt.Errorf("storage: flag queue full")
-	}
-	var f Folder
-	if err := tx.QueryRowContext(ctx, "SELECT id,account_id,name,role,uid_validity,last_uid FROM folders WHERE id=?", e.FolderID).Scan(&f.ID, &f.AccountID, &f.Name, &f.Role, &f.UIDValidity, &f.LastUID); err != nil {
-		return e, fmt.Errorf("storage flag folder: %w", err)
-	}
-	action := FlagAction{EmailID: id, AccountID: e.AccountID, Folder: f, UID: e.UID, MessageID: e.MessageID, Change: change, OldRead: e.IsRead, OldStarred: e.IsStarred}
-	data, err := json.Marshal(action)
+	queueCount := -1
+	e, err = enqueueFlagTx(ctx, tx, e, change, &queueCount)
 	if err != nil {
-		return e, fmt.Errorf("storage flag JSON: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO settings(key,value,updated_at) VALUES(?,?,?)", flagKey(id), string(data), time.Now().Unix()); err != nil {
-		return e, fmt.Errorf("storage enqueue flags: %w", err)
-	}
-	if change.IsRead != nil {
-		e.IsRead = *change.IsRead
-	}
-	if change.IsStarred != nil {
-		e.IsStarred = *change.IsStarred
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE emails SET is_read=?,is_starred=? WHERE id=?", e.IsRead, e.IsStarred, id); err != nil {
-		return e, fmt.Errorf("storage optimistic flags: %w", err)
+		return e, err
 	}
 	if err := tx.Commit(); err != nil {
 		return e, fmt.Errorf("storage commit flags: %w", err)
 	}
 	return e, nil
 }
+
+func UniquePositiveIDs(ids []int64, limit int) ([]int64, bool) {
+	if len(ids) == 0 || len(ids) > limit {
+		return nil, false
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	unique := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id < 1 {
+			return nil, false
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	return unique, len(unique) > 0
+}
+
+func (s *Store) QueueFlagsBatch(ctx context.Context, ids []int64, change FlagChange) (updated []Email, resultErr error) {
+	unique, ok := UniquePositiveIDs(ids, maxBatchEmails)
+	if !ok || !change.Valid() {
+		return nil, ErrInvalidQuery
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("storage batch flag transaction: %w", err)
+	}
+	defer func() {
+		if resultErr != nil {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+				resultErr = errors.Join(resultErr, err)
+			}
+		}
+	}()
+	queueCount := -1
+	updated = make([]Email, 0, len(unique))
+	skipped := 0
+	pendingBlocked := 0
+	for _, id := range unique {
+		e, err := scanEmail(tx.QueryRowContext(ctx, "SELECT "+emailColumns+" FROM emails e JOIN folders f ON f.id=e.folder_id WHERE e.id=?", id))
+		if errors.Is(err, sql.ErrNoRows) {
+			skipped++
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !validFolderChange(e, change) || (change.Archive && e.FolderRole == "archive") || (change.Restore && e.FolderRole == "inbox") {
+			skipped++
+			continue
+		}
+		queued, err := enqueueFlagTx(ctx, tx, e, change, &queueCount)
+		if errors.Is(err, ErrActionPending) {
+			pendingBlocked++
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		updated = append(updated, queued)
+	}
+	if len(updated) == 0 {
+		if pendingBlocked > 0 {
+			return nil, ErrActionPending
+		}
+		return nil, ErrInvalidQuery
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("storage commit batch flags: %w", err)
+	}
+	return updated, nil
+}
+
 func (s *Store) FlagActions(ctx context.Context) (actions []FlagAction, resultErr error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT value FROM settings WHERE key GLOB 'flag_action:*' ORDER BY updated_at,key LIMIT 128")
+	rows, err := s.DB.QueryContext(ctx, "SELECT value FROM settings WHERE key GLOB 'flag_action:*' ORDER BY updated_at,key LIMIT ?", maxFlagActions)
 	if err != nil {
 		return nil, fmt.Errorf("storage flag actions: %w", err)
 	}
@@ -157,20 +284,51 @@ func (s *Store) FlagActions(ctx context.Context) (actions []FlagAction, resultEr
 	}
 	return actions, nil
 }
-func (s *Store) RetryFlagAction(ctx context.Context, action FlagAction) error {
-	data, err := json.Marshal(action)
-	if err != nil {
-		return fmt.Errorf("storage retry flags JSON: %w", err)
+func coalesceFlagAction(existing FlagAction, change FlagChange) FlagAction {
+	merged := existing
+	if change.IsRead != nil {
+		v := *change.IsRead
+		merged.Change.IsRead = &v
 	}
-	if _, err := s.DB.ExecContext(ctx, "UPDATE settings SET value=?,updated_at=? WHERE key=?", string(data), time.Now().Unix(), flagKey(action.EmailID)); err != nil {
-		return fmt.Errorf("storage retry flags: %w", err)
+	if change.IsStarred != nil {
+		v := *change.IsStarred
+		merged.Change.IsStarred = &v
 	}
-	return nil
+	if change.Archive {
+		merged.Change.Archive = true
+	}
+	if change.Delete {
+		merged.Change.Delete = true
+	}
+	if change.Restore {
+		merged.Change.Restore = true
+	}
+	merged.Attempts = 0
+	merged.NextAt = 0
+	merged.Revision = existing.Revision + 1
+	return merged
 }
-func (s *Store) FinishFlagAction(ctx context.Context, action FlagAction, destination *Folder, uid uint32, rollback bool) (resultErr error) {
+
+func reconcileCoalescedFlagAction(current, completed FlagAction) FlagAction {
+	if completed.Change.IsRead != nil {
+		current.OldRead = *completed.Change.IsRead
+		if current.Change.IsRead != nil && *current.Change.IsRead == *completed.Change.IsRead {
+			current.Change.IsRead = nil
+		}
+	}
+	if completed.Change.IsStarred != nil {
+		current.OldStarred = *completed.Change.IsStarred
+		if current.Change.IsStarred != nil && *current.Change.IsStarred == *completed.Change.IsStarred {
+			current.Change.IsStarred = nil
+		}
+	}
+	return current
+}
+
+func (s *Store) RetryFlagAction(ctx context.Context, action FlagAction) (resultErr error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("storage finish flags transaction: %w", err)
+		return fmt.Errorf("storage retry flags transaction: %w", err)
 	}
 	defer func() {
 		if resultErr != nil {
@@ -179,23 +337,99 @@ func (s *Store) FinishFlagAction(ctx context.Context, action FlagAction, destina
 			}
 		}
 	}()
-	if rollback {
-		if _, err := tx.ExecContext(ctx, "UPDATE emails SET is_read=?,is_starred=? WHERE id=?", action.OldRead, action.OldStarred, action.EmailID); err != nil {
-			return fmt.Errorf("storage rollback local flags: %w", err)
+	var existingValue string
+	err = tx.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=?", flagKey(action.EmailID)).Scan(&existingValue)
+	if errors.Is(err, sql.ErrNoRows) {
+		return tx.Commit()
+	}
+	if err != nil {
+		return fmt.Errorf("storage retry flags read: %w", err)
+	}
+	var current FlagAction
+	if err := json.Unmarshal([]byte(existingValue), &current); err != nil {
+		return fmt.Errorf("storage retry flags decode: %w", err)
+	}
+	if current.Revision != action.Revision {
+		return tx.Commit()
+	}
+	data, err := json.Marshal(action)
+	if err != nil {
+		return fmt.Errorf("storage retry flags JSON: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE settings SET value=?,updated_at=? WHERE key=?", string(data), time.Now().Unix(), flagKey(action.EmailID)); err != nil {
+		return fmt.Errorf("storage retry flags: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("storage retry flags commit: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) FinishFlagAction(ctx context.Context, action FlagAction, destination *Folder, uid uint32, rollback bool) error {
+	_, err := s.CompleteFlagAction(ctx, action, destination, uid, rollback)
+	return err
+}
+
+func (s *Store) CompleteFlagAction(ctx context.Context, action FlagAction, destination *Folder, uid uint32, rollback bool) (pending bool, resultErr error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("storage finish flags transaction: %w", err)
+	}
+	defer func() {
+		if resultErr != nil {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+				resultErr = errors.Join(resultErr, err)
+			}
 		}
-	} else if destination != nil {
+	}()
+	var existingValue string
+	err = tx.QueryRowContext(ctx, "SELECT value FROM settings WHERE key=?", flagKey(action.EmailID)).Scan(&existingValue)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, tx.Commit()
+	}
+	if err != nil {
+		return false, fmt.Errorf("storage finish flags read: %w", err)
+	}
+	var current FlagAction
+	if err := json.Unmarshal([]byte(existingValue), &current); err != nil {
+		return false, fmt.Errorf("storage finish flags decode: %w", err)
+	}
+	if current.Revision != action.Revision {
+		if rollback {
+			return true, tx.Commit()
+		}
+		updated := reconcileCoalescedFlagAction(current, action)
+		if updated.Change.Valid() {
+			data, err := json.Marshal(updated)
+			if err != nil {
+				return false, fmt.Errorf("storage update coalesced flags JSON: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE settings SET value=?,updated_at=? WHERE key=?", string(data), time.Now().Unix(), flagKey(action.EmailID)); err != nil {
+				return false, fmt.Errorf("storage update coalesced flags: %w", err)
+			}
+			if err := tx.Commit(); err != nil {
+				return false, fmt.Errorf("storage update coalesced flags commit: %w", err)
+			}
+			return true, nil
+		}
+	}
+	if rollback && current.Revision == action.Revision {
+		if _, err := tx.ExecContext(ctx, "UPDATE emails SET is_read=?,is_starred=? WHERE id=?", action.OldRead, action.OldStarred, action.EmailID); err != nil {
+			return false, fmt.Errorf("storage rollback local flags: %w", err)
+		}
+	} else if destination != nil && current.Revision == action.Revision {
 		if uid == 0 {
-			return fmt.Errorf("storage: missing destination UID")
+			return false, fmt.Errorf("storage: missing destination UID")
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM emails WHERE account_id=? AND folder_id=? AND uid=? AND id<>?", action.AccountID, destination.ID, uid, action.EmailID); err != nil {
-			return fmt.Errorf("storage deduplicate moved email: %w", err)
+			return false, fmt.Errorf("storage deduplicate moved email: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE emails SET folder_id=?,uid=? WHERE id=?", destination.ID, uid, action.EmailID); err != nil {
-			return fmt.Errorf("storage relocate email: %w", err)
+			return false, fmt.Errorf("storage relocate email: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM settings WHERE key=?", flagKey(action.EmailID)); err != nil {
-		return fmt.Errorf("storage finish flags: %w", err)
+		return false, fmt.Errorf("storage finish flags: %w", err)
 	}
 	for _, folderID := range []int64{action.Folder.ID, func() int64 {
 		if destination != nil {
@@ -204,11 +438,11 @@ func (s *Store) FinishFlagAction(ctx context.Context, action FlagAction, destina
 		return action.Folder.ID
 	}()} {
 		if _, err := tx.ExecContext(ctx, "UPDATE folders SET unread_count=(SELECT COUNT(*) FROM emails WHERE folder_id=? AND is_read=0) WHERE id=?", folderID, folderID); err != nil {
-			return fmt.Errorf("storage flag unread count: %w", err)
+			return false, fmt.Errorf("storage flag unread count: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("storage finish flags commit: %w", err)
+		return false, fmt.Errorf("storage finish flags commit: %w", err)
 	}
-	return nil
+	return false, nil
 }

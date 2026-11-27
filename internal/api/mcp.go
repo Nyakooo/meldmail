@@ -19,7 +19,8 @@ func (s *Server) mcpRoutes(mux *http.ServeMux) {
 		"DELETE /api/mcp/tokens/{id}/revoked": s.deleteRevokedToken,
 		"GET /api/mcp/approvals/{id}":         s.reviewApproval,
 		"GET /api/mcp/approvals":              s.approvals, "POST /api/mcp/approvals/{id}/approve": s.approve, "POST /api/mcp/approvals/{id}/reject": s.reject,
-		"GET /api/mcp/audit": s.audit,
+		"POST /api/mcp/approvals/reject-batch": s.rejectBatch,
+		"GET /api/mcp/audit":                   s.audit,
 	} {
 		mux.HandleFunc(path, s.protected(handler))
 	}
@@ -112,6 +113,20 @@ func (s *Server) reject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"status": "rejected"})
+}
+func (s *Server) rejectBatch(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	count, err := s.mcp.RejectBatch(r.Context(), body.IDs)
+	if err != nil {
+		mcpError(w, err)
+		return
+	}
+	writeJSON(w, map[string]interface{}{"status": "rejected", "count": count})
 }
 func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 	logs, err := s.store.AuditLogs(r.Context())

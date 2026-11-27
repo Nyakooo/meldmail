@@ -284,3 +284,51 @@ func TestConnectionDiagnosticsCheckInbox(t *testing.T) {
 		t.Fatalf("expected inbox access failure, got %+v", checks)
 	}
 }
+
+func TestManualSyncClearsErrorStatus(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	fixture := testmail.IMAP(t, "manual@example.com", "fixture")
+	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "manual-sync.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := store.DB.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	service, err := New(store, make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.TLSConfig = fixture.ClientTLS
+	account, err := service.Prepare(ctx, AccountInput{
+		Account: storage.Account{
+			Email: "manual@example.com", Provider: "custom", ProxyMode: "direct",
+			IMAPHost: "127.0.0.1", IMAPPort: fixture.Port, IMAPTLS: "implicit",
+			SMTPHost: "127.0.0.1", SMTPPort: fixture.Port, SMTPTLS: "implicit",
+		},
+		Password: "fixture",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err = store.SaveAccount(ctx, account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetAccountStatus(ctx, account.ID, "error", "连接超时，请检查网络、端口或代理"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Sync(ctx, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.Account(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "active" || updated.LastError != "" {
+		t.Fatalf("manual sync did not clear error status: %+v", updated)
+	}
+}

@@ -18,13 +18,31 @@ func (s *Server) emptyTrash(w http.ResponseWriter, r *http.Request) {
 	purgeTrash(w, r, s.mail.EmptyTrash)
 }
 
+func (s *Server) purgeEmailsBatch(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []int64 `json:"ids"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if _, ok := storage.UniquePositiveIDs(body.IDs, 100); !ok {
+		http.Error(w, "invalid email IDs", http.StatusBadRequest)
+		return
+	}
+	writeTrashPurgeResult(w, s.mail.PurgeEmails(r.Context(), body.IDs))
+}
+
 func purgeTrash(w http.ResponseWriter, r *http.Request, purge func(context.Context, int64) error) {
 	id, err := accountID(r)
 	if err != nil || id < 1 {
 		http.Error(w, "invalid ID", http.StatusBadRequest)
 		return
 	}
-	switch err := purge(r.Context(), id); {
+	writeTrashPurgeResult(w, purge(r.Context(), id))
+}
+
+func writeTrashPurgeResult(w http.ResponseWriter, err error) {
+	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, storage.ErrInvalidQuery):

@@ -294,12 +294,24 @@ func (s *Service) Sync(ctx context.Context, id int64) (count int, result error) 
 			logMailOperation(ctx, id, "sync_imap_close", closeStarted, err, -1)
 		}
 	}()
-	return client.Sync(ctx, s.Store, a, func(e storage.Email) error {
+	synced, err := client.Sync(ctx, s.Store, a, func(e storage.Email) error {
 		return s.Events.Publish("new_email", struct {
 			storage.Email
 			FromSync bool `json:"from_sync"`
 		}{Email: e, FromSync: true})
 	})
+	if err != nil {
+		return synced, err
+	}
+	if a.Status == "error" || a.LastError != "" {
+		if statusErr := s.Store.SetAccountStatus(ctx, id, "active", ""); statusErr != nil {
+			return synced, statusErr
+		}
+		if pubErr := s.Events.Publish("sync_status", map[string]interface{}{"account_id": id, "status": "active", "mode": "manual", "last_error": ""}); pubErr != nil {
+			return synced, pubErr
+		}
+	}
+	return synced, nil
 }
 
 type Diagnostic struct {

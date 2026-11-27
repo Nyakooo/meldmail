@@ -36,10 +36,19 @@ const pageDirty = ref(false)
 const stats = ref<StatsData | null>(null)
 const statsUnavailable = ref(false)
 const selected = ref<Email | null>(null)
+const selectedIds = ref<number[]>([])
+const batchBusy = ref(false)
+const selectableEmails = computed(() => emails.value.filter(email => !email.pending_action))
+const selectedSet = computed(() => new Set(selectedIds.value))
+const selectedEmails = computed(() => emails.value.filter(email => selectedSet.value.has(email.id) && !email.pending_action))
+const allPageSelected = computed(() => selectableEmails.value.length > 0 && selectableEmails.value.every(email => selectedSet.value.has(email.id)))
+const somePageSelected = computed(() => selectedEmails.value.length > 0 && !allPageSelected.value)
 const settings = ref<'account' | 'transfer' | 'proxy' | null>(null)
 const passwordOpen = ref(false)
 const loading = ref(false)
 const syncing = ref(false)
+const syncingAccountIds = ref<number[]>([])
+const isAccountSyncing = (id: number) => syncingAccountIds.value.includes(id)
 const error = ref('')
 const sidebarOpen = ref(false)
 const composing = ref<{ action: ComposeAction; original?: Email } | null>(null)
@@ -67,6 +76,7 @@ let sequence = 0
 let activeRequest: AbortController | undefined
 let eventRevision = 0
 const accountName = (id: number) => { const a = accounts.value.find(a => a.id === id); return a?.display_name || a?.email || t('邮箱') }
+const selectedAccount = computed(() => accounts.value.find(a => a.id === accountId.value))
 const heading = computed(() => unread.value ? t('未读邮件') : ({ inbox: t('统一收件箱'), all: t('全部邮件'), archive: t('已归档'), trash: t('废纸篓') }[folder.value] || t('邮件')))
 function date(value: number) { return new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric' }).format(new Date(value * 1000)) }
 function fullDate(value: number) { return new Date(value * 1000).toLocaleString(locale.value === 'zh' ? 'zh-CN' : 'en-US') }
@@ -83,9 +93,56 @@ async function loadEmails(targetCursor = pageCursor.value) {
   const page = await request<EmailPage>(`/api/emails?${params}`, { signal: controller.signal })
   if (current !== sequence) return false
   emails.value = page.emails; cursor.value = page.next_cursor; pageCursor.value = targetCursor; total.value = page.total ?? page.emails.length; pageDirty.value = revision !== eventRevision
+  syncSelection()
   if (pageDirty.value && !navigating.value) scheduleRefresh()
   return true
  } catch (err) { if (!controller.signal.aborted) error.value = errorMessage(err); return false } finally { if (current === sequence) loading.value = false }
+}
+function syncSelection() {
+ const available = new Set(emails.value.filter(email => !email.pending_action).map(email => email.id))
+ selectedIds.value = selectedIds.value.filter(id => available.has(id))
+}
+function clearSelection() { selectedIds.value = [] }
+function toggleSelect(id: number) {
+ if (selectedSet.value.has(id)) selectedIds.value = selectedIds.value.filter(item => item !== id)
+ else selectedIds.value = [...selectedIds.value, id]
+}
+function toggleSelectAll() {
+ if (allPageSelected.value) clearSelection()
+ else selectedIds.value = selectableEmails.value.map(email => email.id)
+}
+async function batchFlags(change: { is_read?: boolean; is_starred?: boolean; archive?: boolean; delete?: boolean; restore?: boolean }) {
+ const targets = selectedEmails.value
+ if (!targets.length || batchBusy.value) return
+ if (change.delete && !window.confirm(t('将选中的 {count} 封邮件移到废纸篓？').replace('{count}', String(targets.length)))) return
+ batchBusy.value = true; error.value = ''
+ try {
+  const ids = targets.map(email => email.id)
+  const response = await request<{ emails: Email[] }>('/api/emails/batch', { method: 'POST', body: JSON.stringify({ ids, ...change }) })
+  const pendingAction = change.delete ? 'delete' : change.archive ? 'archive' : change.restore ? 'restore' : undefined
+  response.emails.forEach(email => {
+   applyFlags({ ...email, pending_action: pendingAction ?? email.pending_action, archived: change.archive, deleted: change.delete, restored: change.restore, pending: true })
+  })
+  if (change.archive || change.delete || change.restore) clearSelection()
+  else syncSelection()
+  void loadStats()
+ } catch (err) { error.value = errorMessage(err) } finally { batchBusy.value = false }
+}
+async function batchPurge() {
+ const targets = selectedEmails.value
+ if (!targets.length || batchBusy.value || folder.value !== 'trash') return
+ if (!window.confirm(t('永久删除选中的 {count} 封邮件？删除后无法恢复。').replace('{count}', String(targets.length)))) return
+ batchBusy.value = true; error.value = ''
+ try {
+  const ids = targets.map(email => email.id)
+  await request<void>('/api/emails/purge', { method: 'POST', body: JSON.stringify({ ids }) })
+  const removed = new Set(ids)
+  emails.value = emails.value.filter(email => !removed.has(email.id))
+  if (selected.value && removed.has(selected.value.id)) selected.value = null
+  clearSelection()
+  void loadEmails()
+  void loadStats()
+ } catch (err) { error.value = errorMessage(err) } finally { batchBusy.value = false; syncSelection() }
 }
 const clearingTrash = ref(false)
 const trashAccount = computed(() => accounts.value.find(a => a.id === accountId.value)
@@ -100,12 +157,12 @@ async function emptyTrash() {
   void loadStats()
  } catch (err) { error.value = errorMessage(err) } finally { clearingTrash.value = false }
 }
-function filter() { previousCursors.value = []; pageCursor.value = ''; selected.value = null; sidebarOpen.value = false; void loadEmails() }
+function filter() { previousCursors.value = []; pageCursor.value = ''; selected.value = null; clearSelection(); sidebarOpen.value = false; void loadEmails() }
 async function movePage(next: boolean) {
  if (loading.value || navigating.value || pageDirty.value || (next ? !cursor.value : !previousCursors.value.length)) return
  const oldCursor = pageCursor.value
  const target = next ? cursor.value : previousCursors.value[previousCursors.value.length - 1] || ''
- navigating.value = true; selected.value = null
+ navigating.value = true; selected.value = null; clearSelection()
  try { if (await loadEmails(target)) { if (next) previousCursors.value.push(oldCursor); else previousCursors.value.pop() } }
  finally { navigating.value = false; if (pageDirty.value) scheduleRefresh() }
 }
@@ -134,18 +191,62 @@ function connectionDetails(account: Account) {
 const settingsAccount = ref<number | null>(null)
 function search() { activeRequest?.abort(); pageDirty.value = true; clearTimeout(searchTimer); searchTimer = setTimeout(filter, 250) }
 async function accountsChanged() { try { previousCursors.value = []; pageCursor.value = ''; await loadAccounts(); if (accountId.value && !accounts.value.some(a => a.id === accountId.value)) accountId.value = 0; await loadEmails(); void loadStats() } catch (err) { error.value = errorMessage(err) } }
+async function syncAccount(account: Account) {
+ if (account.status === 'paused' || isAccountSyncing(account.id)) return
+ syncingAccountIds.value = [...syncingAccountIds.value, account.id]
+ error.value = ''; notice.value = ''
+ try {
+  const result = await request<{ synced?: number; status?: 'syncing' }>(`/api/accounts/${account.id}/sync`, { method: 'POST' })
+  const label = account.display_name || account.email
+  await loadAccounts()
+  if ((result.synced ?? 0) > 0) await loadEmails()
+  void loadStats()
+  if (result.status === 'syncing') notice.value = t('「{name}」正在后台同步').replace('{name}', label)
+  else if ((result.synced ?? 0) > 0) notice.value = t('「{name}」已同步 {count} 封新邮件').replace('{name}', label).replace('{count}', String(result.synced))
+  else notice.value = t('「{name}」已是最新').replace('{name}', label)
+ } catch (err) {
+  notice.value = ''
+  error.value = errorMessage(err)
+ } finally {
+  syncingAccountIds.value = syncingAccountIds.value.filter(id => id !== account.id)
+ }
+}
 async function sync() {
+ const targets = accounts.value.filter(a => a.status !== 'paused' && (!accountId.value || a.id === accountId.value))
+ if (!targets.length) return
+ if (targets.length === 1) {
+  syncing.value = true
+  try { await syncAccount(targets[0]) } finally { syncing.value = false }
+  return
+ }
  syncing.value = true; error.value = ''; notice.value = ''
  try {
-  const targets = accounts.value.filter(a => a.status !== 'paused' && (!accountId.value || a.id === accountId.value))
-  // Requests are deliberately sequential here; server sync paths share a three-account limiter.
+  // Match the server's three-account sync limiter while keeping individual UI spinners accurate.
   let alreadySyncing = false
-  for (const account of targets) {
-   const result = await request<{ status?: 'syncing' }>(`/api/accounts/${account.id}/sync`, { method: 'POST' })
-   alreadySyncing ||= result.status === 'syncing'
-  }
-  await loadAccounts(); await loadEmails(); void loadStats()
-  if (targets.length) notice.value = t(alreadySyncing ? '部分邮箱正在后台同步' : '同步完成')
+  let totalSynced = 0
+  let cursorIndex = 0
+  const workers = Array.from({ length: Math.min(3, targets.length) }, async () => {
+   while (cursorIndex < targets.length) {
+    const account = targets[cursorIndex++]
+    if (isAccountSyncing(account.id)) {
+     alreadySyncing = true
+     continue
+    }
+    syncingAccountIds.value = [...syncingAccountIds.value, account.id]
+    try {
+     const result = await request<{ synced?: number; status?: 'syncing' }>(`/api/accounts/${account.id}/sync`, { method: 'POST' })
+     alreadySyncing ||= result.status === 'syncing'
+     totalSynced += result.synced ?? 0
+    } finally {
+     syncingAccountIds.value = syncingAccountIds.value.filter(id => id !== account.id)
+    }
+   }
+  })
+  await Promise.all(workers)
+  await loadAccounts()
+  if (totalSynced > 0) await loadEmails()
+  void loadStats()
+  notice.value = t(alreadySyncing ? '部分邮箱正在后台同步' : '同步完成')
  } catch (err) { notice.value = ''; error.value = errorMessage(err) } finally { syncing.value = false }
 }
 function matches(email: Email): boolean {
@@ -165,9 +266,10 @@ function applyFlags(update: EmailUpdate) {
   }
   if (update.deleted || update.restored || folder.value === 'inbox') { emails.value = emails.value.filter(email => email.id !== update.id); if (selected.value?.id === update.id) selected.value = null; return }
  }
- const existing = emails.value.find(email => email.id === update.id)
- if (existing) { Object.assign(existing, update); if (!matches(existing)) emails.value = emails.value.filter(email => email.id !== update.id) }
- if (selected.value?.id === update.id) Object.assign(selected.value, update)
+ const patched = update.pending && (update.archived || update.deleted || update.restored) ? { ...update, pending_action: update.deleted ? 'delete' : update.archived ? 'archive' : 'restore' } : update
+ const existing = emails.value.find(email => email.id === patched.id)
+ if (existing) { Object.assign(existing, patched); if (!matches(existing)) emails.value = emails.value.filter(email => email.id !== patched.id) }
+ if (selected.value?.id === patched.id) Object.assign(selected.value, patched)
 }
 function compose(action: ComposeAction = 'send') { composing.value = { action, original: action === 'send' ? undefined : selected.value || undefined } }
 async function refreshMCP() { try { const actions = await request<Approval[]>('/api/mcp/approvals'); pendingApprovals.value = actions.filter(action => action.status === 'pending').length; mcpRevision.value++ } catch (err) { error.value = errorMessage(err) } }
@@ -211,21 +313,33 @@ function startEvents() {
    if (selected.value?.id === email.id) selected.value = matches(email) ? email : null
    emails.value = emails.value.filter(item => item.id !== email.id)
    if (matches(email) && !pageCursor.value) { emails.value.push(email); emails.value.sort((a, b) => b.date - a.date || b.id - a.id); emails.value = emails.value.slice(0, 50) }
+   syncSelection()
    scheduleRefresh()
   } catch { error.value = t('邮件更新失败，请重新加载列表') }
  })
  events.addEventListener('trash_changed', (event: MessageEvent<string>) => {
   try {
-   const { account_id, email_id } = JSON.parse(event.data) as { account_id: number; email_id: number }
-   if (selected.value?.id === email_id || (!email_id && selected.value?.folder_role === 'trash' && selected.value.account_id === account_id)) selected.value = null
+   const { account_id, email_id, email_ids } = JSON.parse(event.data) as { account_id: number; email_id: number; email_ids?: number[] }
+   const removedIds = Array.isArray(email_ids) && email_ids.length ? email_ids : (email_id ? [email_id] : [])
+   if ((selected.value && removedIds.includes(selected.value.id)) || (!removedIds.length && selected.value?.folder_role === 'trash' && selected.value.account_id === account_id)) selected.value = null
    if (folder.value === 'trash' && (!accountId.value || accountId.value === account_id)) {
-    if (email_id) emails.value = emails.value.filter(email => email.id !== email_id)
+    if (removedIds.length) {
+     const removed = new Set(removedIds)
+     emails.value = emails.value.filter(email => !removed.has(email.id))
+    }
+    syncSelection()
     scheduleRefresh()
    } else { void loadStats() }
   } catch { error.value = t('邮件状态更新失败，请重新加载列表') }
  })
  events.addEventListener('flag_updated', (event: MessageEvent<string>) => {
-  try { applyFlags(JSON.parse(event.data) as EmailUpdate); scheduleRefresh() } catch { error.value = t('邮件状态更新失败，请重新加载列表') }
+  try {
+   const payload = JSON.parse(event.data) as EmailUpdate | { updates?: EmailUpdate[] }
+   if ('updates' in payload && Array.isArray(payload.updates)) payload.updates.forEach(applyFlags)
+   else applyFlags(payload as EmailUpdate)
+   syncSelection()
+   scheduleRefresh()
+  } catch { error.value = t('邮件状态更新失败，请重新加载列表') }
  })
  events.addEventListener('mcp_approval_required', (event: MessageEvent<string>) => {
   try { const update = JSON.parse(event.data) as { action_id: string; status: string }; void refreshMCP(); if (update.status === 'pending') { notify(t('MeldMail 有待审批的发信请求'), `approval-${update.action_id}`); if (!reviewId.value) reviewId.value = update.action_id } } catch { error.value = t('审批通知读取失败') }
@@ -245,7 +359,13 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
    <nav :aria-label="t('邮件文件夹')"><button :class="{ active: folder === 'inbox' && !unread }" @click="folder = 'inbox'; unread = false; filter()"><Icon name="mail" />{{ t("统一收件箱") }}</button><button :class="{ active: unread }" @click="folder = 'all'; unread = true; filter()"><Icon name="unread" />{{ t("未读邮件") }}</button><button :class="{ active: folder === 'all' && !unread }" @click="folder = 'all'; unread = false; filter()"><Icon name="all" />{{ t("全部邮件") }}</button><button :class="{ active: folder === 'archive' }" @click="folder = 'archive'; unread = false; filter()"><Icon name="archive" />{{ t("已归档") }}</button><button :class="{ active: folder === 'trash' }" @click="folder = 'trash'; unread = false; filter()"><Icon name="trash" />{{ t("废纸篓") }}</button></nav>
    <div class="account-heading"><p class="eyebrow">{{ t("已连接邮箱") }}</p><button class="icon-button" :aria-label="t('添加邮箱')" @click="settings = 'account'">＋</button></div>
    <button class="account-link" :class="{ active: accountId === 0 }" @click="accountId = 0; filter()"><span class="account-dot all-dot"></span>{{ t("所有邮箱") }}<span class="account-count">{{ accountCount(0) ?? '—' }}</span></button>
-   <div v-for="(account, index) in accounts" :key="account.id" class="account-row"><button class="account-link" :class="{ active: accountId === account.id }" @click="accountId = account.id; filter()"><span class="account-dot" :style="{ background: ['#397867', '#c89349', '#6579aa', '#ad6b89'][index % 4] }"></span><span class="truncate">{{ account.display_name || account.email }}</span><span class="account-count">{{ accountCount(account.id) ?? '—' }}</span></button><button v-if="account.status === 'error' || account.status === 'paused'" class="account-status" :class="account.status" :aria-label="accountStatus(account) + ' · ' + account.email" :title="accountStatus(account) + (account.last_error ? '：' + t(account.last_error) : '') + ' · ' + t('查看连接设置')" @click="connectionDetails(account)"><span class="status-dot"></span><span>{{ account.status === 'paused' ? t('已暂停') : t('待重连') }}</span></button></div>
+   <div v-for="(account, index) in accounts" :key="account.id" class="account-row">
+    <div class="account-row-main">
+     <button class="account-link" :class="{ active: accountId === account.id }" @click="accountId = account.id; filter()"><span class="account-dot" :style="{ background: ['#397867', '#c89349', '#6579aa', '#ad6b89'][index % 4] }"></span><span class="truncate">{{ account.display_name || account.email }}</span><span class="account-count">{{ accountCount(account.id) ?? '—' }}</span></button>
+     <button class="account-sync" :class="{ syncing: isAccountSyncing(account.id) }" :disabled="account.status === 'paused' || isAccountSyncing(account.id)" :aria-busy="isAccountSyncing(account.id)" :aria-label="isAccountSyncing(account.id) ? t('正在同步「{name}」…').replace('{name}', account.display_name || account.email) : t('仅同步「{name}」').replace('{name}', account.display_name || account.email)" :title="account.status === 'paused' ? t('已暂停') : isAccountSyncing(account.id) ? t('正在同步「{name}」…').replace('{name}', account.display_name || account.email) : t('仅同步「{name}」').replace('{name}', account.display_name || account.email)" @click="syncAccount(account)"><Icon name="refresh" /></button>
+    </div>
+    <button v-if="account.status === 'error' || account.status === 'paused'" class="account-status" :class="account.status" :aria-label="accountStatus(account) + ' · ' + account.email" :title="accountStatus(account) + (account.last_error ? '：' + t(account.last_error) : '') + ' · ' + t('查看连接设置')" @click="connectionDetails(account)"><span class="status-dot"></span><span>{{ account.status === 'paused' ? t('已暂停') : t('待重连') }}</span></button>
+   </div>
    <div class="sidebar-footer">
     <p class="live-status" role="status"><span class="status-dot" :class="{ connected }"></span>{{ connected ? t('实时更新已连接') : t('正在连接实时更新') }}</p>
     <nav class="footer-actions" :aria-label="t('设置与账户')">
@@ -264,23 +384,46 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
    <div v-if="error" class="workspace-error error" role="alert">{{ t(error) }} <button class="text-button" @click="loadEmails()">{{ t("重试") }}</button></div>
    <div class="mail-columns" :class="{ 'has-selection': selected }">
     <section class="message-list" :aria-label="t('邮件列表')">
-     <header class="list-heading">
-      <div class="list-heading-title">
-       <Icon :name="unread ? 'unread' : ({ inbox: 'mail', all: 'all', archive: 'archive', trash: 'trash' }[folder] || 'all')" />
-       <h1>{{ heading }}</h1>
+     <div class="list-sticky-top">
+      <header class="list-heading">
+       <div class="list-heading-title">
+        <label v-if="emails.length" class="list-select-all" :title="t('全选本页')">
+         <input type="checkbox" :checked="allPageSelected" :indeterminate="somePageSelected" :disabled="batchBusy || !selectableEmails.length" :aria-label="t('全选本页')" @change="toggleSelectAll">
+        </label>
+        <Icon :name="unread ? 'unread' : ({ inbox: 'mail', all: 'all', archive: 'archive', trash: 'trash' }[folder] || 'all')" />
+        <h1>{{ heading }}</h1>
+       </div>
+       <span class="list-heading-count" :title="t('当前筛选共 ') + total + t(' 封')">
+        {{ total.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') }}{{ t(' 封') }}
+       </span>
+      </header>
+      <div v-if="selectedEmails.length" class="batch-toolbar" role="region" :aria-label="t('批量操作')" :aria-busy="batchBusy">
+       <div class="batch-toolbar-summary">
+        <span>{{ t('已选 {count} 封').replace('{count}', String(selectedEmails.length)) }}</span>
+        <button class="text-button" :disabled="batchBusy" @click="clearSelection">{{ t('取消选择') }}</button>
+       </div>
+       <div class="batch-toolbar-actions">
+        <button v-if="selectedEmails.some(email => !email.is_read)" class="reader-icon" :title="t('批量已读')" :aria-label="t('批量已读')" :disabled="batchBusy" @click="batchFlags({ is_read: true })"><Icon name="mail" /></button>
+        <button v-if="selectedEmails.some(email => email.is_read)" class="reader-icon" :title="t('批量未读')" :aria-label="t('批量未读')" :disabled="batchBusy" @click="batchFlags({ is_read: false })"><Icon name="unread" /></button>
+        <button class="reader-icon" :class="{ starred: selectedEmails.every(email => email.is_starred) }" :title="selectedEmails.some(email => !email.is_starred) ? t('批量星标') : t('批量取消星标')" :aria-label="selectedEmails.some(email => !email.is_starred) ? t('批量星标') : t('批量取消星标')" :disabled="batchBusy" @click="batchFlags({ is_starred: selectedEmails.some(email => !email.is_starred) })"><Icon name="star" /></button>
+        <button v-if="selectedEmails.some(email => email.folder_role !== 'archive' && email.folder_role !== 'trash')" class="reader-icon" :title="t('批量归档')" :aria-label="t('批量归档')" :disabled="batchBusy" @click="batchFlags({ archive: true })"><Icon name="archive" /></button>
+        <button v-if="selectedEmails.some(email => email.folder_role === 'archive' || email.folder_role === 'trash')" class="reader-icon" :title="t('批量恢复')" :aria-label="t('批量恢复')" :disabled="batchBusy" @click="batchFlags({ restore: true })"><Icon name="restore" /></button>
+        <button v-if="folder !== 'trash' && selectedEmails.some(email => email.folder_role !== 'trash')" class="reader-icon" :title="t('批量删除')" :aria-label="t('批量删除')" :disabled="batchBusy" @click="batchFlags({ delete: true })"><Icon name="trash" /></button>
+        <button v-if="folder === 'trash'" class="reader-icon batch-danger" :title="t('批量彻底删除')" :aria-label="t('批量彻底删除')" :disabled="batchBusy" @click="batchPurge"><Icon name="trash" /></button>
+       </div>
       </div>
-      <span class="list-heading-count" :title="t('当前筛选共 ') + total + t(' 封')">
-       {{ total.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US') }}{{ t(' 封') }}
-      </span>
-     </header>
-     <div class="mobile-account-filter"><select v-model="accountId" :aria-label="t('筛选邮箱')" @change="filter"><option :value="0">{{ t("所有邮箱") }}</option><option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.display_name || a.email }}</option></select></div>
+     </div>
+     <div class="mobile-account-filter">
+      <select v-model="accountId" :aria-label="t('筛选邮箱')" @change="filter"><option :value="0">{{ t("所有邮箱") }}</option><option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.display_name || a.email }}</option></select>
+      <button v-if="selectedAccount" class="account-sync mobile-account-sync" :class="{ syncing: isAccountSyncing(selectedAccount.id) }" :disabled="selectedAccount.status === 'paused' || isAccountSyncing(selectedAccount.id)" :aria-busy="isAccountSyncing(selectedAccount.id)" :aria-label="isAccountSyncing(selectedAccount.id) ? t('正在同步「{name}」…').replace('{name}', selectedAccount.display_name || selectedAccount.email) : t('仅同步「{name}」').replace('{name}', selectedAccount.display_name || selectedAccount.email)" :title="selectedAccount.status === 'paused' ? t('已暂停') : t('仅同步「{name}」').replace('{name}', selectedAccount.display_name || selectedAccount.email)" @click="syncAccount(selectedAccount)"><Icon name="refresh" /></button>
+     </div>
      <div v-if="folder === 'trash' && accounts.length" class="trash-tools">
       <button v-if="trashAccount" class="secondary" :disabled="clearingTrash" @click="emptyTrash">{{ t('清空废纸篓') }}</button>
       <small v-else>{{ t('选择一个邮箱后可清空废纸篓。') }}</small>
      </div>
      <p v-if="loading && !emails.length" class="list-status" role="status">{{ t("正在加载邮件…") }}</p>
      <div v-else-if="!emails.length" class="empty-list"><div class="empty-symbol">✉</div><h2>{{ accounts.length ? t('这里很安静') : t('从连接一个邮箱开始') }}</h2><p>{{ query ? t('没有找到匹配邮件，试试其他关键词。') : accounts.length ? t('暂无符合条件的邮件。你可以同步邮箱，或调整筛选条件。') : t('把工作与生活的来信，汇集在一个地方。') }}</p><button v-if="!accounts.length" class="primary" @click="settings = 'account'">{{ t("＋ 连接邮箱") }}</button></div>
-     <ul v-else class="email-items"><li v-for="email in emails" :key="email.id"><button class="email-item" :class="{ selected: selected?.id === email.id, unread: !email.is_read }" @click="selected = email"><div class="email-item-top"><span class="sender">{{ email.from_name || email.from_addr || t('未知发件人') }}</span><time :datetime="new Date(email.date * 1000).toISOString()">{{ date(email.date) }}</time></div><div class="email-subject"><span v-if="!email.is_read" class="unread-dot"></span><strong>{{ email.subject || t('（无主题）') }}</strong><span v-if="email.has_attachments" :aria-label="t('有附件')">↧</span><span v-if="email.is_starred" :aria-label="t('已加星标')">★</span></div><p>{{ email.snippet || t('（暂无摘要）') }}</p><span v-if="email.pending_action" class="pending-label">{{ t("正在确认移动 · ") }}</span><span class="account-tag">{{ accountName(email.account_id) }}</span></button></li></ul>
+     <ul v-else class="email-items" :class="{ 'has-checked': selectedEmails.length > 0 }"><li v-for="email in emails" :key="email.id" class="email-row" :class="{ selected: selected?.id === email.id, checked: selectedSet.has(email.id) }"><label class="email-check" :title="t('选择邮件')"><input type="checkbox" :checked="selectedSet.has(email.id)" :disabled="batchBusy || !!email.pending_action" :aria-label="t('选择邮件') + ' · ' + (email.subject || t('（无主题）'))" @change="toggleSelect(email.id)"></label><button class="email-item" :class="{ selected: selected?.id === email.id, unread: !email.is_read }" @click="selected = email"><div class="email-item-top"><span class="sender">{{ email.from_name || email.from_addr || t('未知发件人') }}</span><time :datetime="new Date(email.date * 1000).toISOString()">{{ date(email.date) }}</time></div><div class="email-subject"><span v-if="!email.is_read" class="unread-dot"></span><strong>{{ email.subject || t('（无主题）') }}</strong><span v-if="email.has_attachments" :aria-label="t('有附件')">↧</span><span v-if="email.is_starred" :aria-label="t('已加星标')">★</span></div><p>{{ email.snippet || t('（暂无摘要）') }}</p><span v-if="email.pending_action" class="pending-label">{{ t("正在确认移动 · ") }}</span><span class="account-tag">{{ accountName(email.account_id) }}</span></button></li></ul>
      <nav v-if="total || previousCursors.length" class="mail-pagination" :aria-label="t('邮件分页')"><button class="secondary" :disabled="loading || navigating || pageDirty || !previousCursors.length" @click="movePage(false)">{{ t("上一页") }}</button><span><strong>{{ t("第 ") }}{{ previousCursors.length + 1 }}{{ t(" 页") }}</strong><small>{{ t("每页 50 封") }}</small></span><button class="secondary" :disabled="loading || navigating || pageDirty || !cursor" @click="movePage(true)">{{ t("下一页") }}</button></nav>
     </section>
     <section class="reader" :aria-label="t('邮件预览')">
@@ -338,4 +481,36 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); clearTimeout(refreshTimer); c
 .sync-progress { flex: none; font-size: 12px; color: var(--accent); white-space: nowrap; }
 .workspace-toolbar .sync-button.syncing { opacity: 1; }
 .settings-notice { margin: 0 0 4px; color: var(--muted); font-size: 12px; }
+.list-sticky-top { position: sticky; top: 0; z-index: 2; }
+.list-sticky-top > .list-heading { position: static; justify-content: space-between; }
+.list-select-all { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; cursor: pointer; }
+.list-select-all input, .email-check input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.batch-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 8px; padding: 7px 14px; border-bottom: 1px solid var(--line); background: var(--selected); font-size: 12px; }
+.batch-toolbar-summary { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text); }
+.batch-toolbar-summary .text-button { font-size: 11px; font-weight: 500; padding: 2px 6px; }
+.batch-toolbar-actions { display: flex; align-items: center; gap: 2px; }
+.batch-toolbar-actions .batch-danger:hover:not(:disabled) { color: var(--danger); }
+.email-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); position: relative; }
+.email-row:hover { background: var(--hover); }
+.email-row.selected { background: var(--selected); }
+.email-row.checked:not(.selected) { background: color-mix(in srgb, var(--selected) 55%, transparent); }
+.email-check { display: flex; align-items: flex-start; padding: 14px 4px 14px 12px; cursor: pointer; opacity: .55; transition: opacity .15s; }
+.email-row:hover .email-check, .email-row:focus-within .email-check, .email-row.checked .email-check, .email-items.has-checked .email-check { opacity: 1; }
+.email-row > .email-item { flex: 1; min-width: 0; border-bottom: 0; padding-left: 8px; background: transparent; }
+.email-row > .email-item:hover, .email-row > .email-item.selected { background: transparent; }
+.email-row > .email-item.selected::before { display: none; }
+.email-row.selected::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); }
+.account-row-main { display: flex; align-items: center; gap: 2px; width: 100%; min-width: 0; }
+.account-row-main > .account-link { flex: 1; min-width: 0; width: auto; }
+.account-sync { flex: 0 0 26px; width: 26px; height: 26px; display: inline-grid; place-items: center; border-radius: 50%; color: var(--muted); opacity: .55; transition: opacity .15s, background-color .15s, color .15s; }
+.account-sync .ui-icon { width: 14px; height: 14px; }
+.account-row:hover .account-sync, .account-row:focus-within .account-sync, .account-sync.syncing { opacity: 1; }
+.account-sync:hover:not(:disabled) { background: var(--hover); color: var(--accent); }
+.account-sync.syncing { color: var(--accent); }
+.account-sync.syncing .ui-icon { animation: account-sync-rotate 1.2s linear infinite; }
+.mobile-account-sync { flex: 0 0 34px; width: 34px; height: 34px; opacity: 1; border: 1px solid var(--line); background: var(--canvas); }
+@keyframes account-sync-rotate { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .account-sync { transition: none; } .account-sync.syncing .ui-icon { animation: none; } }
+@media (hover: none) { .email-check, .account-sync { opacity: 1; } }
+@media (max-width: 800px) { .email-check { padding-top: 15px; padding-left: 14px; } .mobile-account-filter { display: flex; align-items: center; gap: 8px; } .mobile-account-filter select { flex: 1; min-width: 0; } }
 </style>

@@ -218,6 +218,48 @@ func (s *Server) Approve(ctx context.Context, id string) (resultErr error) {
 func (s *Server) Reject(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.rejectLocked(ctx, id)
+}
+
+func (s *Server) RejectBatch(ctx context.Context, ids []string) (int, error) {
+	if len(ids) == 0 || len(ids) > 100 {
+		return 0, ErrInvalid
+	}
+	seen := make(map[string]struct{}, len(ids))
+	unique := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			return 0, ErrInvalid
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.expireLocked(ctx); err != nil {
+		return 0, err
+	}
+	rejected := 0
+	for _, id := range unique {
+		err := s.rejectLocked(ctx, id)
+		if errors.Is(err, ErrConflict) {
+			continue
+		}
+		if err != nil {
+			return rejected, err
+		}
+		rejected++
+	}
+	if rejected == 0 {
+		return 0, ErrConflict
+	}
+	return rejected, nil
+}
+
+func (s *Server) rejectLocked(ctx context.Context, id string) error {
 	entry, ok := s.pending[id]
 	if !ok || entry.executing {
 		return ErrConflict

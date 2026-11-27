@@ -316,3 +316,108 @@ eventLoop:
 		t.Fatal(err)
 	}
 }
+
+func TestBatchMarkArchiveAndRejectBatch(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	fixture := testmail.IMAP(t, "mcpbatch@example.com", "fixture")
+	smtpPort, _ := testmail.SMTP(t, fixture.ServerTLS)
+	for _, subject := range []string{"Code 1", "Code 2"} {
+		raw := "From: Sender <sender@example.com>\r\nTo: mcpbatch@example.com\r\nSubject: " + subject + "\r\nMessage-ID: <" + strings.ReplaceAll(subject, " ", "") + "@example.com>\r\nContent-Type: text/plain\r\n\r\n123456"
+		if _, err := fixture.User.Append("INBOX", strings.NewReader(raw), &imap.AppendOptions{Time: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "mcp-batch.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.DB.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	service, err := mail.New(store, make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.TLSConfig = fixture.ClientTLS
+	account, err := service.Prepare(ctx, mail.AccountInput{Account: storage.Account{Email: "mcpbatch@example.com", Provider: "custom", IMAPHost: "127.0.0.1", IMAPPort: fixture.Port, IMAPTLS: "implicit", SMTPHost: "127.0.0.1", SMTPPort: smtpPort, SMTPTLS: "implicit", ProxyMode: "direct"}, Password: "fixture"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err = store.SaveAccount(ctx, account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Sync(ctx, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.ListEmails(ctx, storage.EmailQuery{})
+	if err != nil || len(page.Emails) != 2 {
+		t.Fatalf("expected 2 emails, got %+v err=%v", page, err)
+	}
+	ids := []int64{page.Emails[0].ID, page.Emails[1].ID}
+	server, err := New(ctx, service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(server)
+	t.Cleanup(httpServer.Close)
+	_, rawToken, err := server.CreateToken(ctx, "batch-writer", "readwrite", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := sdk.NewClient(&sdk.Implementation{Name: "mcp-batch-test", Version: "1.0"}, nil)
+	session, err := client.Connect(ctx, &sdk.StreamableClientTransport{Endpoint: httpServer.URL, HTTPClient: &http.Client{Transport: bearerTransport{http.DefaultTransport, rawToken}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := session.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	// Still 9 tools.
+	listed, err := session.ListTools(ctx, nil)
+	if err != nil || len(listed.Tools) != 9 {
+		t.Fatalf("expected 9 tools, got %d err=%v", len(listed.Tools), err)
+	}
+	marked, err := session.CallTool(ctx, &sdk.CallToolParams{Name: "mark_email_read", Arguments: map[string]interface{}{"email_ids": ids, "is_read": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := toolOutput(t, marked); out["status"] != "queued" || out["count"] != float64(2) {
+		t.Fatalf("unexpected mark_email_read batch output: %+v", out)
+	}
+	archived, err := session.CallTool(ctx, &sdk.CallToolParams{Name: "archive_email", Arguments: map[string]interface{}{"email_ids": ids}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := toolOutput(t, archived); out["status"] != "queued" || out["count"] != float64(2) {
+		t.Fatalf("unexpected archive_email batch output: %+v", out)
+	}
+	if err := service.ProcessFlagActions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	archivedPage, err := store.ListEmails(ctx, storage.EmailQuery{Folder: "archive"})
+	if err != nil || archivedPage.Total != 2 {
+		t.Fatalf("expected 2 archived emails, got %+v err=%v", archivedPage, err)
+	}
+	// Enqueue two approvals and reject them in batch.
+	var actionIDs []string
+	for _, subj := range []string{"Pending 1", "Pending 2"} {
+		res, err := session.CallTool(ctx, &sdk.CallToolParams{Name: "send_email", Arguments: map[string]interface{}{"account_id": account.ID, "to": []string{"r@example.com"}, "subject": subj, "text": "body"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		actionIDs = append(actionIDs, toolOutput(t, res)["action_id"].(string))
+	}
+	rejected, err := server.RejectBatch(ctx, actionIDs)
+	if err != nil || rejected != 2 {
+		t.Fatalf("expected 2 rejected approvals, got %d err=%v", rejected, err)
+	}
+	if _, err := server.RejectBatch(ctx, actionIDs); !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected ErrConflict on already-rejected batch, got %v", err)
+	}
+}

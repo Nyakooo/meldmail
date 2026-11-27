@@ -129,3 +129,89 @@ func TestRecoverAcknowledgedMove(t *testing.T) {
 		t.Fatal("MOVE retry duplicated the message")
 	}
 }
+
+func TestBatchFlagAndPurgeActions(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	fixture := testmail.IMAP(t, "batchmail@example.com", "fixture")
+	for _, subject := range []string{"OTP 1", "OTP 2", "OTP 3"} {
+		if _, err := fixture.User.Append("INBOX", strings.NewReader("From: sender@example.com\r\nSubject: "+subject+"\r\nMessage-ID: <"+strings.ReplaceAll(subject, " ", "")+"@example.com>\r\n\r\nbody"), &imap.AppendOptions{Time: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := storage.Open(ctx, filepath.Join(t.TempDir(), "batch-mail.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := store.DB.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	service, err := New(store, make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.TLSConfig = fixture.ClientTLS
+	account, err := service.Prepare(ctx, AccountInput{Account: storage.Account{Email: "batchmail@example.com", Provider: "custom", IMAPHost: "127.0.0.1", IMAPPort: fixture.Port, IMAPTLS: "implicit", SMTPHost: "127.0.0.1", SMTPPort: 465, SMTPTLS: "implicit", ProxyMode: "direct"}, Password: "fixture"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err = store.SaveAccount(ctx, account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Sync(ctx, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.ListEmails(ctx, storage.EmailQuery{})
+	if err != nil || len(page.Emails) != 3 {
+		t.Fatalf("expected 3 emails, got %d err=%v", len(page.Emails), err)
+	}
+	ids := []int64{page.Emails[0].ID, page.Emails[1].ID, page.Emails[2].ID}
+	read := true
+	if _, err := service.ChangeFlagsBatch(ctx, ids, storage.FlagChange{IsRead: &read}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ProcessFlagActions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Verify batch archive of 2 messages and batch delete of the remaining message, then batch purge.
+	if _, err := service.ChangeFlagsBatch(ctx, ids[:2], storage.FlagChange{Archive: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ChangeFlagsBatch(ctx, ids[2:], storage.FlagChange{Delete: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ProcessFlagActions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := store.ListEmails(ctx, storage.EmailQuery{Folder: "archive"})
+	if err != nil || archived.Total != 2 {
+		t.Fatalf("expected 2 archived emails, got %+v err=%v", archived, err)
+	}
+	trash, err := store.ListEmails(ctx, storage.EmailQuery{Folder: "trash"})
+	if err != nil || trash.Total != 1 {
+		t.Fatalf("expected 1 trashed email, got %+v err=%v", trash, err)
+	}
+	// Restore archived emails in batch, then move all 3 to trash and purge 2 in batch.
+	if _, err := service.ChangeFlagsBatch(ctx, ids[:2], storage.FlagChange{Restore: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ProcessFlagActions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ChangeFlagsBatch(ctx, ids[:2], storage.FlagChange{Delete: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ProcessFlagActions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.PurgeEmails(ctx, ids[:2]); err != nil {
+		t.Fatal(err)
+	}
+	trash, err = store.ListEmails(ctx, storage.EmailQuery{Folder: "trash"})
+	if err != nil || trash.Total != 1 {
+		t.Fatalf("expected 1 remaining trash email after batch purge, got %+v err=%v", trash, err)
+	}
+}

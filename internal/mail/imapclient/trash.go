@@ -47,6 +47,18 @@ func (c *Client) TrashMailboxes(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) PurgeTrash(ctx context.Context, name string, validity, uid uint32) (uint32, uint32, error) {
+	return c.purgeTrash(ctx, name, validity, uid, nil)
+}
+
+func (c *Client) PurgeTrashBatch(ctx context.Context, name string, validity uint32, uids []uint32) (uint32, error) {
+	if len(uids) == 0 {
+		return validity, nil
+	}
+	gotValidity, _, err := c.purgeTrash(ctx, name, validity, 0, uids)
+	return gotValidity, err
+}
+
+func (c *Client) purgeTrash(ctx context.Context, name string, validity, uid uint32, uids []uint32) (uint32, uint32, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, 0, err
 	}
@@ -54,14 +66,19 @@ func (c *Client) PurgeTrash(ctx context.Context, name string, validity, uid uint
 	if err != nil {
 		return 0, 0, fmt.Errorf("imap select trash: %w", err)
 	}
-	if selected.UIDValidity == 0 || uid != 0 && selected.UIDValidity != validity {
+	if selected.UIDValidity == 0 || (uid != 0 || len(uids) > 0) && selected.UIDValidity != validity {
 		return 0, 0, ErrMessageGone
 	}
 	upper := uid
 	var set imap.UIDSet
-	if uid != 0 {
+	switch {
+	case len(uids) > 0:
+		for _, item := range uids {
+			set.AddNum(imap.UID(item))
+		}
+	case uid != 0:
 		set.AddNum(imap.UID(uid))
-	} else {
+	default:
 		if selected.UIDNext == 0 {
 			return 0, 0, ErrTargetedExpungeUnsupported
 		}

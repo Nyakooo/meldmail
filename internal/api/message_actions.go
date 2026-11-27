@@ -131,16 +131,58 @@ func (s *Server) changeFlags(w http.ResponseWriter, r *http.Request) {
 	}
 	email, err := s.mail.ChangeFlags(r.Context(), id, change)
 	if err != nil {
-		if errors.Is(err, storage.ErrActionPending) {
-			http.Error(w, "a change is still pending for this email", 409)
-		} else if errors.Is(err, storage.ErrInvalidQuery) {
-			http.Error(w, "invalid action for this folder", 400)
-		} else {
-			storageError(w, err)
-		}
+		flagActionError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(202)
 	writeJSON(w, map[string]interface{}{"status": "pending", "email": email})
+}
+
+func (s *Server) changeFlagsBatch(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs       []int64 `json:"ids"`
+		IsRead    *bool   `json:"is_read,omitempty"`
+		IsStarred *bool   `json:"is_starred,omitempty"`
+		Archive   bool    `json:"archive,omitempty"`
+		Delete    bool    `json:"delete,omitempty"`
+		Restore   bool    `json:"restore,omitempty"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	change := storage.FlagChange{
+		IsRead:    body.IsRead,
+		IsStarred: body.IsStarred,
+		Archive:   body.Archive,
+		Delete:    body.Delete,
+		Restore:   body.Restore,
+	}
+	if !change.Valid() {
+		http.Error(w, "invalid flag change", 400)
+		return
+	}
+	if _, ok := storage.UniquePositiveIDs(body.IDs, 100); !ok {
+		http.Error(w, "invalid email IDs", 400)
+		return
+	}
+	emails, err := s.mail.ChangeFlagsBatch(r.Context(), body.IDs, change)
+	if err != nil {
+		flagActionError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	writeJSON(w, map[string]interface{}{"status": "pending", "emails": emails, "count": len(emails)})
+}
+
+func flagActionError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, storage.ErrActionPending):
+		http.Error(w, "a change is still pending for this email", 409)
+	case errors.Is(err, storage.ErrInvalidQuery):
+		http.Error(w, "invalid action for this folder", 400)
+	default:
+		storageError(w, err)
+	}
 }

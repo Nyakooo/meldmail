@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { t } from './i18n'
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { MCPToken, Approval, AuditEntry } from './types'
 import { request, errorMessage } from './http'
 const props = defineProps<{ revision: number; initialTab: 'tokens' | 'approvals' }>()
@@ -10,6 +10,9 @@ const tab = ref<string>(props.initialTab)
 const tokens = ref<MCPToken[]>([])
 const approvals = ref<Approval[]>([])
 const audit = ref<AuditEntry[]>([])
+const selectedApprovals = ref<string[]>([])
+const pendingApprovals = computed(() => approvals.value.filter(action => action.status === 'pending'))
+const allPendingSelected = computed(() => pendingApprovals.value.length > 0 && pendingApprovals.value.every(action => selectedApprovals.value.includes(action.id)))
 const name = ref('')
 const scope = ref<'readonly' | 'readwrite'>('readonly')
 const approval = ref(true)
@@ -18,7 +21,31 @@ const busy = ref(false)
 const error = ref('')
 const endpoint = `${window.location.origin}/mcp`
 const statuses: Record<string, string> = { pending: t('待审批'), approved: t('正在执行'), executed: t('已执行'), rejected: t('已拒绝'), failed: t('失败 / 待确认'), success: t('成功'), denied: t('已拒绝'), error: t('失败') }
-async function refresh() { try { [tokens.value, approvals.value, audit.value] = await Promise.all([request<MCPToken[]>('/api/mcp/tokens'), request<Approval[]>('/api/mcp/approvals'), request<AuditEntry[]>('/api/mcp/audit')]) } catch (err) { error.value = errorMessage(err) } }
+async function refresh() {
+ try {
+  [tokens.value, approvals.value, audit.value] = await Promise.all([request<MCPToken[]>('/api/mcp/tokens'), request<Approval[]>('/api/mcp/approvals'), request<AuditEntry[]>('/api/mcp/audit')])
+  const pendingIDs = new Set(pendingApprovals.value.map(action => action.id))
+  selectedApprovals.value = selectedApprovals.value.filter(id => pendingIDs.has(id))
+ } catch (err) { error.value = errorMessage(err) }
+}
+function toggleApproval(id: string) {
+ if (selectedApprovals.value.includes(id)) selectedApprovals.value = selectedApprovals.value.filter(item => item !== id)
+ else selectedApprovals.value = [...selectedApprovals.value, id]
+}
+function toggleAllApprovals() {
+ if (allPendingSelected.value) selectedApprovals.value = []
+ else selectedApprovals.value = pendingApprovals.value.map(action => action.id)
+}
+async function rejectSelected() {
+ const ids = selectedApprovals.value
+ if (!ids.length || busy.value || !window.confirm(t('批量拒绝选中的 {count} 条待审批发信请求？').replace('{count}', String(ids.length)))) return
+ busy.value = true; error.value = ''
+ try {
+  await request<{ status: string; count: number }>('/api/mcp/approvals/reject-batch', { method: 'POST', body: JSON.stringify({ ids }) })
+  selectedApprovals.value = []
+  await refresh(); emit('changed')
+ } catch (err) { error.value = errorMessage(err) } finally { busy.value = false }
+}
 async function create() {
  busy.value = true; error.value = ''; secret.value = ''
  try { const response = await request<{ token: string; metadata: MCPToken }>('/api/mcp/tokens', { method: 'POST', body: JSON.stringify({ name: name.value, scope: scope.value, require_approval: approval.value }) }); secret.value = response.token; name.value = ''; await refresh(); emit('changed') } catch (err) { error.value = errorMessage(err) } finally { busy.value = false }
@@ -50,7 +77,7 @@ onBeforeUnmount(() => { secret.value = ''; if (dialog.value?.open) dialog.value.
    <section v-if="secret" class="token-secret"><strong>{{ t("新令牌只显示这一次，请妥善保存。") }}</strong><label>{{ t("新访问令牌") }}<input :value="secret" type="password" readonly autocomplete="off" :aria-label="t('新访问令牌')"></label><button class="secondary" @click="copy">{{ t("复制令牌") }}</button></section>
    <ul v-if="tokens.length" class="mcp-records"><li v-for="token in tokens" :key="token.id"><div><strong>{{ token.name }}</strong><p>{{ token.scope === 'readonly' ? t('只读') : t('读写') }} · {{ token.require_approval ? t('发信需审批') : t('直接发信') }} · {{ token.enabled ? t('有效') : t('已撤销') }}</p></div><button v-if="token.enabled" class="text-button" :disabled="busy" :aria-label="t('撤销') + ' ' + token.name" @click="revoke(token)">{{ t("撤销") }}</button><button v-else class="text-button" :disabled="busy" :aria-label="t('删除令牌') + ' ' + token.name" @click="deleteRevoked(token)">{{ t('删除令牌') }}</button></li></ul>
   </section>
-  <section v-else-if="tab === 'approvals'"><p v-if="!approvals.length" class="list-status">{{ t("暂无审批记录") }}</p><ul class="mcp-records"><li v-for="action in approvals" :key="action.id"><div><strong>{{ action.payload.subject || t('（无主题）') }}</strong><p>{{ action.token_name }} · {{ t(statuses[action.status] || action.status) }} · {{ new Date(action.created_at * 1000).toLocaleString('zh-CN') }}</p><small v-if="action.error_msg" class="error">{{ action.error_msg }}</small></div><button class="secondary" @click="emit('review', action.id)">{{ action.status === 'pending' ? t('审核') : t('查看') }}</button></li></ul></section>
+  <section v-else-if="tab === 'approvals'"><div v-if="pendingApprovals.length > 1 || selectedApprovals.length" class="approval-batch-bar"><label class="inline-checkbox"><input type="checkbox" :checked="allPendingSelected" :disabled="busy" @change="toggleAllApprovals">{{ t('全选待审批') }}</label><button class="secondary" :disabled="busy || !selectedApprovals.length" @click="rejectSelected">{{ t('拒绝所选 ({count})').replace('{count}', String(selectedApprovals.length)) }}</button></div><p v-if="!approvals.length" class="list-status">{{ t("暂无审批记录") }}</p><ul class="mcp-records"><li v-for="action in approvals" :key="action.id"><div class="approval-row-main"><input v-if="action.status === 'pending'" type="checkbox" :checked="selectedApprovals.includes(action.id)" :disabled="busy" :aria-label="t('选择待审批请求') + ' · ' + (action.payload.subject || t('（无主题）'))" @change="toggleApproval(action.id)"><div><strong>{{ action.payload.subject || t('（无主题）') }}</strong><p>{{ action.token_name }} · {{ t(statuses[action.status] || action.status) }} · {{ new Date(action.created_at * 1000).toLocaleString('zh-CN') }}</p><small v-if="action.error_msg" class="error">{{ action.error_msg }}</small></div></div><button class="secondary" @click="emit('review', action.id)">{{ action.status === 'pending' ? t('审核') : t('查看') }}</button></li></ul></section>
   <section v-else><p v-if="!audit.length" class="list-status">{{ t("暂无审计记录") }}</p><ul class="mcp-records audit-records"><li v-for="entry in audit" :key="entry.id"><div><strong>{{ entry.tool_name }}</strong><p>{{ t(statuses[entry.status] || entry.status) }} · Token #{{ entry.token_id || '—' }} · {{ new Date(entry.created_at * 1000).toLocaleString('zh-CN') }}</p><code>{{ entry.args_summary }}</code></div></li></ul></section>
   </div>
  </dialog>
@@ -62,4 +89,8 @@ onBeforeUnmount(() => { secret.value = ''; if (dialog.value?.open) dialog.value.
 .mcp-token-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .mcp-token-layout > .mcp-records { border-top: 1px solid var(--line); }
 .mcp-content { scrollbar-gutter: auto; }
+.approval-batch-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); font-size: 12px; }
+.approval-batch-bar .inline-checkbox { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text); cursor: pointer; }
+.approval-row-main { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.approval-row-main input[type="checkbox"] { margin-top: 3px; width: 15px; height: 15px; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
 </style>

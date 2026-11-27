@@ -15,26 +15,48 @@ type MoveResult struct {
 	UIDValidity, UID uint32
 }
 
+func (c *Client) storeFlagsSet(set imap.UIDSet, change storage.FlagChange) error {
+	for _, item := range []struct {
+		value *bool
+		flag  imap.Flag
+	}{{change.IsRead, imap.FlagSeen}, {change.IsStarred, imap.FlagFlagged}} {
+		if item.value == nil {
+			continue
+		}
+		op := imap.StoreFlagsDel
+		if *item.value {
+			op = imap.StoreFlagsAdd
+		}
+		if err := c.IMAP.Store(set, &imap.StoreFlags{Op: op, Flags: []imap.Flag{item.flag}, Silent: true}, nil).Close(); err != nil {
+			return fmt.Errorf("imap store flags: %w", err)
+		}
+	}
+	return nil
+}
+
+// ApplyFlagsBatch updates Seen/Flagged flags for multiple UIDs in a single folder.
+func (c *Client) ApplyFlagsBatch(ctx context.Context, folder storage.Folder, uids []uint32, change storage.FlagChange) error {
+	if len(uids) == 0 || change.HasMove() {
+		return nil
+	}
+	if err := c.SelectMessage(ctx, storage.Email{}, folder); err != nil {
+		return err
+	}
+	var set imap.UIDSet
+	for _, uid := range uids {
+		set.AddNum(imap.UID(uid))
+	}
+	return c.storeFlagsSet(set, change)
+}
+
 func (c *Client) ApplyFlags(ctx context.Context, a storage.Account, action storage.FlagAction, checkpoint func(MoveResult) error) (*MoveResult, error) {
 	e := storage.Email{UID: action.UID}
 	if err := c.SelectMessage(ctx, e, action.Folder); err != nil {
 		return nil, err
 	}
 	set := imap.UIDSetNum(imap.UID(action.UID))
-	for _, change := range []struct {
-		value *bool
-		flag  imap.Flag
-	}{{action.Change.IsRead, imap.FlagSeen}, {action.Change.IsStarred, imap.FlagFlagged}} {
-		if change.value == nil {
-			continue
-		}
-		op := imap.StoreFlagsDel
-		if *change.value {
-			op = imap.StoreFlagsAdd
-		}
-		if err := c.IMAP.Store(set, &imap.StoreFlags{Op: op, Flags: []imap.Flag{change.flag}, Silent: true}, nil).Close(); err != nil {
-			return nil, fmt.Errorf("imap store flags: %w", err)
-		}
+	if err := c.storeFlagsSet(set, action.Change); err != nil {
+		return nil, err
 	}
 	if !action.Change.Archive && !action.Change.Delete && !action.Change.Restore {
 		return nil, nil
