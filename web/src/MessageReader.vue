@@ -84,7 +84,8 @@ async function change(change: { is_read?: boolean; is_starred?: boolean; archive
  busy.value = true; actionError.value = ''
  try {
   const response = await request<{ email: Email }>(`/api/emails/${props.email.id}/flags`, { method: 'PATCH', body: JSON.stringify(change) })
-  emit('flags', { ...response.email, archived: change.archive, deleted: change.delete, restored: change.restore, pending: true })
+  const pendingAction = change.delete ? 'delete' : change.archive ? 'archive' : change.restore ? 'restore' : response.email.pending_action
+  emit('flags', { ...response.email, pending_action: pendingAction, archived: change.archive, deleted: change.delete, restored: change.restore, pending: true })
  } catch (err) { actionError.value = errorMessage(err) } finally { busy.value = false }
 }
 async function load() {

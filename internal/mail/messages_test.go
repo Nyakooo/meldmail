@@ -195,18 +195,11 @@ func TestReadSanitizeAndDecodeAttachment(t *testing.T) {
 	if _, err := service.ChangeFlags(ctx, e.ID, storage.FlagChange{IsRead: &read, IsStarred: &star}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ChangeFlags(ctx, e.ID, storage.FlagChange{Archive: true}); !errors.Is(err, storage.ErrActionPending) {
-		t.Fatal("pending action overwritten", err)
-	}
-	if err := service.ProcessFlagActions(ctx); err != nil {
-		t.Fatal(err)
-	}
-	saved, err := store.Email(ctx, e.ID)
-	if err != nil || !saved.IsRead || !saved.IsStarred {
-		t.Fatal("optimistic flags not retained", err)
-	}
 	if _, err := service.ChangeFlags(ctx, e.ID, storage.FlagChange{Archive: true}); err != nil {
-		t.Fatal(err)
+		t.Fatal("archive blocked by pending flag change:", err)
+	}
+	if _, err := service.ChangeFlags(ctx, e.ID, storage.FlagChange{Delete: true}); !errors.Is(err, storage.ErrActionPending) {
+		t.Fatal("pending move overwritten", err)
 	}
 	inbox, err := store.ListEmails(ctx, storage.EmailQuery{Q: "HTML fixture"})
 	if err != nil || len(inbox.Emails) != 0 {
@@ -214,6 +207,10 @@ func TestReadSanitizeAndDecodeAttachment(t *testing.T) {
 	}
 	if err := service.ProcessFlagActions(ctx); err != nil {
 		t.Fatal(err)
+	}
+	saved, err := store.Email(ctx, e.ID)
+	if err != nil || !saved.IsRead || !saved.IsStarred {
+		t.Fatal("optimistic flags not retained", err)
 	}
 	moved, err := store.Email(ctx, e.ID)
 	if err != nil {
@@ -282,5 +279,31 @@ func TestReadSanitizeAndDecodeAttachment(t *testing.T) {
 	}
 	if strings.Contains(persisted.Snippet, "<script>") {
 		t.Fatal("HTML persisted in metadata")
+	}
+
+	// Opening an unread message and deleting it (or purging from Trash) must not be blocked by pending read flags.
+	unread := false
+	if _, err := service.ChangeFlags(ctx, e.ID, storage.FlagChange{IsRead: &unread}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ChangeFlags(ctx, e.ID, storage.FlagChange{Delete: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ProcessFlagActions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	trashed, err := store.Email(ctx, e.ID)
+	if err != nil || trashed.FolderRole != "trash" || trashed.IsRead {
+		t.Fatalf("coalesced unread+delete failed: err=%v email=%+v", err, trashed)
+	}
+	if _, err := service.ChangeFlags(ctx, e.ID, storage.FlagChange{IsRead: &read}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.PurgeEmail(ctx, e.ID); err != nil {
+		t.Fatalf("purge blocked by pending read flag: %v", err)
+	}
+	remainingActions, err := store.FlagActions(ctx)
+	if err != nil || len(remainingActions) != 0 {
+		t.Fatalf("pending action leaked after purge: %+v", remainingActions)
 	}
 }
